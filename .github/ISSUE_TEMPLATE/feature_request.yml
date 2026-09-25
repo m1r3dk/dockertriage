@@ -1,0 +1,48 @@
+name: Feature request
+description: Suggest something the tool should do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This tool has a deliberately narrow shape: no daemon, no root, and the
+        library stays standard-library only. Proposals that fit inside those
+        constraints are much easier to accept. See
+        [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: |
+        What are you actually trying to do, and where does the tool get in the
+        way? Describe the situation, not the feature, so the best fix stays on
+        the table.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: If you have a concrete shape for it, show the command.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: |
+        Existing flags, other tools, or a script you wrote to work around it.
+        This often shows whether the gap is real or just undocumented.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: This does not require a Docker daemon or root.
+        - label: This does not add a dependency to the library (the CLI already uses typer).

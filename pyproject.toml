@@ -1,0 +1,79 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dockertriage"
+dynamic = ["version"]
+description = "Download a Docker image and extract its full rootfs to a folder. No daemon, no root."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["docker", "oci", "registry", "rootfs", "container", "extract"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: System :: Archiving :: Packaging",
+    "Topic :: Security",
+]
+
+# The CLI is typer. The library modules themselves import nothing outside the
+# standard library, so `import dockertriage` in someone else's code stays cheap.
+dependencies = ["typer>=0.12"]
+
+[project.optional-dependencies]
+zstd = ["zstandard>=0.22"]
+
+[dependency-groups]
+# `uv sync` installs these; `pip install dockertriage` does not.
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+dt = "dockertriage.cli:main"
+dockertriage = "dockertriage.cli:main"
+
+[tool.hatch.version]
+path = "src/dockertriage/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dockertriage"]
+# PEP 561: ship the marker so a consumer's type checker actually reads our
+# annotations instead of treating the package as untyped.
+artifacts = ["src/dockertriage/py.typed"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/",
+    "tests/",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "LICENSE",
+]
+
+[project.urls]
+Homepage = "https://github.com/lalkishan/dockertriage"
+Source = "https://github.com/lalkishan/dockertriage"
+Issues = "https://github.com/lalkishan/dockertriage/issues"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# The public API surface is re-exported deliberately.
+"src/dockertriage/__init__.py" = ["F401"]
+# Typer's API *is* calls-in-defaults, and Optional[X] is required while we
+# support 3.9, where `X | None` in a runtime-evaluated signature breaks.
+"src/dockertriage/cli.py" = ["B008", "UP045"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

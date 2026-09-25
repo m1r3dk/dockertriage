@@ -1,0 +1,212 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# CI only ever reads the repository. Saying so explicitly means a compromised
+# action cannot use the default write token to push or open releases.
+permissions:
+  contents: read
+
+# A branch pushed three times in a minute does not need three full matrices.
+# Cancel superseded runs, but never on main, where each commit's result is
+# the record of whether that commit was green.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the package
+        run: pip install -e .
+      - name: Core tests
+        run: python tests/test_dockertriage.py
+      - name: CLI tests
+        run: python tests/test_cli.py
+      - name: Smoke test the commands
+        run: |
+          dt --version
+          dt --help
+          dt inspect alpine:3.19
+          dt layers alpine:3.19
+
+  cross-platform:
+    # Extraction is all path handling, and paths are where macOS and Windows
+    # disagree with Linux: case sensitivity, separators, and which of symlink
+    # or hardlink is even permitted. Run the offline suite on both.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the package
+        run: pip install -e . pytest
+      - name: Offline suite
+        run: python -m pytest tests/ -q
+
+  tests-are-offline:
+    # The suite fakes the registry. If a test starts reaching the network it
+    # becomes flaky on someone else's machine and in CI, so block sockets and
+    # prove it still passes rather than trusting that nobody added a call.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the package
+        run: pip install -e . pytest
+      - name: Run the suite with sockets blocked
+        run: |
+          mkdir -p /tmp/nonet
+          cat > /tmp/nonet/sitecustomize.py <<'EOF'
+          import socket
+          def _blocked(*args, **kwargs):
+              raise RuntimeError("a test tried to use the network")
+          socket.socket.connect = _blocked
+          socket.create_connection = _blocked
+          EOF
+          PYTHONPATH=/tmp/nonet python -m pytest tests/ -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check src tests
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: format --check src tests
+
+  library-stays-light:
+    # typer is required for `dt`, but `import dockertriage` must not pay for
+    # it. Guard that in CI rather than trusting review.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the package
+        run: pip install -e .
+      - name: Importing the library pulls in no third-party module
+        run: |
+          python - <<'EOF'
+          import sys
+          import dockertriage
+          leaked = {"typer", "rich", "click"} & set(sys.modules)
+          if leaked:
+              sys.exit(f"importing dockertriage dragged in {sorted(leaked)}")
+          print("library import is dependency-free")
+          EOF
+      - name: Only cli.py may import a third-party package
+        run: |
+          python - <<'EOF'
+          import ast, pathlib, sys
+          pkg = pathlib.Path("src/dockertriage")
+          bad = {}
+          for path in sorted(pkg.rglob("*.py")):
+              if path.name == "cli.py":
+                  continue
+              mods = set()
+              for n in ast.walk(ast.parse(path.read_text())):
+                  if isinstance(n, ast.Import):
+                      mods |= {a.name.split(".")[0] for a in n.names}
+                  elif isinstance(n, ast.ImportFrom) and n.module and n.level == 0:
+                      mods.add(n.module.split(".")[0])
+              # zstandard is an optional runtime fallback guarded by try/except.
+              extra = mods - set(sys.stdlib_module_names) - {"zstandard", "dockertriage"}
+              if extra:
+                  bad[path.name] = sorted(extra)
+          if bad:
+              sys.exit(f"non-stdlib imports outside cli.py: {bad}")
+          print("library modules are stdlib only")
+          EOF
+
+  package:
+    # A wheel that imports is not the same as a wheel whose console script runs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and install the wheel
+        run: |
+          pip install build
+          python -m build --wheel
+          pip install dist/*.whl
+      - name: The installed console script works
+        run: |
+          cd /tmp
+          dt --version
+          dt --help
+          python -c "import dockertriage; print(dockertriage.__version__)"
+          # Nothing generic may leak into site-packages.
+          python - <<'EOF'
+          import importlib.util, sys
+          for name in ("cli", "constants", "registry", "extract", "batch", "puller"):
+              if importlib.util.find_spec(name) is not None:
+                  sys.exit(f"{name} leaked into site-packages as a top-level module")
+          print("no top-level namespace pollution")
+          EOF
+      - name: Annotations reach a consumer's type checker
+        # The package is annotated, but without the PEP 561 marker in the
+        # wheel a type checker silently treats it as untyped. Prove the
+        # marker shipped by resolving a real type through it.
+        run: |
+          pip install mypy
+          cd /tmp
+          printf 'from dockertriage import pull\nbad: int = pull("alpine:3.19", ".")\n' > probe.py
+          # Capture rather than pipe: in a pipeline the exit status is tee's,
+          # not mypy's, so `if mypy ... | tee` would always look successful.
+          mypy probe.py > out.txt 2>&1 && status=0 || status=$?
+          cat out.txt
+          if [ "$status" -eq 0 ]; then
+            echo "expected a type error but mypy was happy: annotations are not being read"
+            exit 1
+          fi
+          grep -q 'has type "str"' out.txt || {
+            echo "mypy failed for some other reason"; exit 1; }
+          echo "py.typed shipped and annotations resolve"
+
+  ground-truth:
+    # Diff a real extraction against `crane export`. This is what catches
+    # dropped symlinks/hardlinks, which unit tests alone would not prove.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the package
+        run: pip install -e .
+      - name: Install crane
+        run: |
+          VERSION=v0.20.2
+          curl -sSL "https://github.com/google/go-containerregistry/releases/download/${VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin crane
+          crane version
+      - name: Verify against crane export
+        run: python tests/verify_against_crane.py alpine:3.19 debian:bookworm-slim python:3.12-slim redis:latest

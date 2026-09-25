@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.eggs/
+uv.lock
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- This tool's own output -------------------------------------------
+# dockertriage extracts container filesystems, which are large, are not
+# ours to redistribute, and can contain credentials baked into the image.
+# None of it belongs in version control.
+
+# Default batch destination, and the conventional single-image ones.
+out/
+output/
+
+# Extracted rootfs folders dumped in the repo root. A pull with no -o lands
+# here as <namespace>_<repo>_<tag>/, so match the shapes that produces
+# rather than trying to list every image anyone might pull.
+library_*/
+*_rootfs/
+*_latest/
+*/.image.json
+.layers/
+
+# The skip list a batch writes next to its downloads.
+not-downloaded.txt
+
+# Scratch analysis of extracted images. This is working material about
+# other people's containers, frequently including secrets found inside
+# them, and must never be published.
+analysis/
+*secrets*
+*verified_keys*
+
+# Scratch inputs and dumps. The image lists used during development name
+# real third-party repositories that were being scanned; publishing them
+# would amount to publishing a target list, so the whole directory stays
+# local. README shows the file format inline instead.
+examples/
+mentions.txt
+
+# Reports produced by --report / dt verify -r.
+report.json
+verify.json
