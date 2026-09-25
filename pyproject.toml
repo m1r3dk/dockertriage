@@ -30,7 +30,7 @@ zstd = ["zstandard>=0.22"]
 
 [dependency-groups]
 # `uv sync` installs these; `pip install dockertriage` does not.
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["mypy>=1.11,<1.19", "pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 dt = "dockertriage.cli:main"
@@ -57,9 +57,9 @@ include = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/lalkishan/dockertriage"
-Source = "https://github.com/lalkishan/dockertriage"
-Issues = "https://github.com/lalkishan/dockertriage/issues"
+Homepage = "https://github.com/m1r3dk/dockertriage"
+Source = "https://github.com/m1r3dk/dockertriage"
+Issues = "https://github.com/m1r3dk/dockertriage/issues"
 
 [tool.ruff]
 line-length = 100
@@ -77,3 +77,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.9"
+files = ["src"]

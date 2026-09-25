@@ -90,8 +90,9 @@ def _split_platform(platform: Optional[str], os_name: str, arch: str) -> tuple[s
     return target_os, target_arch
 
 
-@app.command(no_args_is_help=True)
+@app.command()
 def pull(
+    ctx: typer.Context,
     image: Optional[str] = typer.Argument(
         None,
         help="alpine:3.19 | nginx@sha256:... | https://hub.docker.com/r/org/repo",
@@ -197,6 +198,17 @@ def pull(
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress output."),
 ) -> None:
     """Download one image, or every image in a file, and extract the rootfs."""
+    global _exit_code
+
+    # Typer releases disagree about the exit status produced by
+    # ``no_args_is_help``.  Handle the unfinished command ourselves so
+    # ``dt pull`` consistently teaches the syntax while still reporting a
+    # usage error to scripts on every supported Python version.
+    if image is None and list_file is None:
+        _exit_code = 2
+        typer.echo(ctx.get_help())
+        raise typer.Exit(2)
+
     target_os, target_arch = _split_platform(platform, os_name, arch)
 
     # Usage errors exit 2, the same as argparse's parser.error, so scripts
@@ -229,6 +241,7 @@ def pull(
         )
         return
 
+    assert image is not None
     try:
         path = puller.pull(
             image,
@@ -243,7 +256,6 @@ def pull(
             strict_tag=strict_tag,
         )
     except KeyboardInterrupt:
-        global _exit_code
         _exit_code = 130
         console.print("[yellow]interrupted[/yellow]")
         raise typer.Exit(130) from None

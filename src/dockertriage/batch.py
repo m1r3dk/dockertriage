@@ -169,16 +169,17 @@ def pull_many(
     except Exception:
         # Diagnostics must never be the reason a batch does not start.
         budget = RateBudget()
-    if budget.known:
+    remaining = budget.remaining
+    if remaining is not None:
         log(f"docker hub: {budget.describe()}")
-        if budget.remaining == 0:
+        if remaining == 0:
             log("  none left; the window must reset before any pull succeeds")
             if not budget.authenticated:
                 log("  set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN to raise the limit")
-        elif budget.remaining < len(items):
+        elif remaining < len(items):
             log(
-                f"  {len(items)} images but only {budget.remaining} pulls left: "
-                f"expect to stop around image {budget.remaining}"
+                f"  {len(items)} images but only {remaining} pulls left: "
+                f"expect to stop around image {remaining}"
             )
             if not budget.authenticated:
                 log("  set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN to raise the limit")

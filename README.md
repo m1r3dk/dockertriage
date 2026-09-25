@@ -1,6 +1,6 @@
 # dockertriage
 
-[![CI](https://github.com/lalkishan/dockertriage/actions/workflows/ci.yml/badge.svg)](https://github.com/lalkishan/dockertriage/actions/workflows/ci.yml)
+[![CI](https://github.com/m1r3dk/dockertriage/actions/workflows/ci.yml/badge.svg)](https://github.com/m1r3dk/dockertriage/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 

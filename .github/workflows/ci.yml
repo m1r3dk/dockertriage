@@ -99,6 +99,18 @@ jobs:
         with:
           args: format --check src tests
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package and type checker
+        run: pip install -e . "mypy>=1.11,<1.19"
+      - name: Check source annotations
+        run: mypy
+
   library-stays-light:
     # typer is required for `dt`, but `import dockertriage` must not pay for
     # it. Guard that in CI rather than trusting review.

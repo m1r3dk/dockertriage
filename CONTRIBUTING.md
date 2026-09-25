@@ -28,7 +28,7 @@ of them is a different tool, so each is enforced by CI rather than by review:
 ## Getting set up
 
 ```bash
-git clone https://github.com/lalkishan/dockertriage
+git clone https://github.com/m1r3dk/dockertriage
 cd dockertriage
 uv sync                    # installs the package plus the dev group
 uv run pytest tests/       # should be green before you change anything
