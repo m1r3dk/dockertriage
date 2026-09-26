@@ -690,7 +690,9 @@ class TestBatchRouting(unittest.TestCase):
         finally:
             batch_mod.pull_many = real
             os.unlink(path)
-        self.assertEqual(seen["out_dir"], "/tmp/elsewhere")
+        # The CLI passes the output through pathlib, so on Windows the separator
+        # is normalised; compare against the OS-native form, not the literal.
+        self.assertEqual(seen["out_dir"], os.path.normpath("/tmp/elsewhere"))
 
     def test_single_image_still_defaults_to_cwd(self):
         seen: dict = {}
