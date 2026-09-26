@@ -121,7 +121,12 @@ Inspect an image without downloading its layers:
 
 ```bash
 dt inspect python:3.12-slim
-dt layers alpine:3.19
+```
+
+For scripting, print just the layer digests, one per line:
+
+```bash
+dt inspect --digests alpine:3.19
 ```
 
 ## Batch downloads
@@ -271,7 +276,7 @@ incomplete, or mismatched.
 | `dt -f FILE` | Preflight, pull, and verify an image list. |
 | `dt verify PATH` | Verify previously extracted images. |
 | `dt inspect IMAGE` | Display layer sizes and build commands without downloading layers. |
-| `dt layers IMAGE` | Print layer digests, one per line. |
+| `dt inspect --digests IMAGE` | Print layer digests, one per line, for scripting. |
 | `dt --help` | Show all commands. |
 | `dt COMMAND --help` | Show command-specific options. |
 

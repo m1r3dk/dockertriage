@@ -524,6 +524,12 @@ def inspect(
     ),
     os_name: str = typer.Option("linux", "--os", "-O", help="Target OS."),
     arch: str = typer.Option("amd64", "--arch", "-a", help="Target architecture."),
+    digests: bool = typer.Option(
+        False,
+        "--digests",
+        "-D",
+        help="Print layer digests one per line for scripting, instead of the table.",
+    ),
     no_budget_check: bool = typer.Option(
         False,
         "--no-budget-check",
@@ -537,16 +543,27 @@ def inspect(
         help="Fail if [cyan]latest[/cyan] is missing instead of using the newest tag.",
     ),
 ) -> None:
-    """Show an image's layers and size without downloading them."""
+    """Show an image's layers and size without downloading them.
+
+    By default this prints a table of layer sizes and build commands for a
+    human to read. Pass [cyan]--digests[/cyan] to print just the layer
+    digests, one per line, which is easy to pipe into another command.
+    """
     target_os, target_arch = _split_platform(platform, os_name, arch)
     ref = parse_image(image)
     client = RegistryClient(ref)
     try:
-        layers, config = resolve_layers(client, target_os, target_arch, strict_tag)
+        found, config = resolve_layers(client, target_os, target_arch, strict_tag)
     except (ValueError, RuntimeError, OSError) as exc:
         raise _fail(str(exc)) from None
     finally:
         client.close()
+
+    # Script-friendly mode: bare digests on stdout, nothing to parse around.
+    if digests:
+        for layer in found:
+            print(layer.digest)
+        return
 
     table = Table(title=f"{ref.pretty}  ({target_os}/{target_arch})")
     table.add_column("#", justify="right", style="dim")
@@ -554,43 +571,16 @@ def inspect(
     table.add_column("command")
     # buildkit puts tabs and newlines in `created_by`; collapse them or rich
     # reflows the table into an unreadable mess.
-    for i, layer in enumerate(layers, start=1):
+    for i, layer in enumerate(found, start=1):
         table.add_row(str(i), human_bytes(layer.size), one_line(layer.command or layer.digest, 68))
     stdout.print(table)
 
     image_cfg = config.get("config") or {}
-    total = human_bytes(sum(layer.size for layer in layers))
+    total = human_bytes(sum(layer.size for layer in found))
     stdout.print(
-        f"[bold]{len(layers)}[/bold] layers, [bold]{total}[/bold] compressed"
+        f"[bold]{len(found)}[/bold] layers, [bold]{total}[/bold] compressed"
         f"   entrypoint={image_cfg.get('Entrypoint')}  cmd={image_cfg.get('Cmd')}"
     )
-
-
-@app.command()
-def layers(
-    image: str = typer.Argument(..., help="Image reference.", show_default=False),
-    platform: str | None = typer.Option(
-        None, "--platform", "-p", help="Target platform as os/arch."
-    ),
-    strict_tag: bool = typer.Option(
-        False,
-        "--strict-tag",
-        "-t",
-        help="Fail if [cyan]latest[/cyan] is missing instead of using the newest tag.",
-    ),
-) -> None:
-    """Print layer digests, one per line, for scripting."""
-    target_os, target_arch = _split_platform(platform, "linux", "amd64")
-    ref = parse_image(image)
-    client = RegistryClient(ref)
-    try:
-        found, _ = resolve_layers(client, target_os, target_arch, strict_tag)
-    except (ValueError, RuntimeError, OSError) as exc:
-        raise _fail(str(exc)) from None
-    finally:
-        client.close()
-    for layer in found:
-        print(layer.digest)
 
 
 def main(args: list[str] | None = None) -> int:
@@ -607,7 +597,7 @@ def main(args: list[str] | None = None) -> int:
     # No arguments is a request for help, not an error worth exit 1.
     if not argv:
         argv = ["--help"]
-    commands = {"pull", "inspect", "layers", "verify"}
+    commands = {"pull", "inspect", "verify"}
     # App-level flags must keep reaching the app, not get shoved into `pull`.
     app_level = {"--help", "-h", "--version", "-V"}
     if argv and argv[0] not in commands and argv[0] not in app_level:

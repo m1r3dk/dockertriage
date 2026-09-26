@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 
 from .constants import DOCKERHUB_REGISTRY, DOCKERHUB_TOKEN_URL, USER_AGENT
+from .tls import ssl_context
 
 __all__ = ["RateBudget", "check_rate_budget", "registry_credentials"]
 
@@ -77,11 +78,13 @@ def check_rate_budget(timeout: float = 15.0) -> RateBudget:
             basic = base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
             headers["Authorization"] = f"Basic {basic}"
         req = urllib.request.Request(f"{DOCKERHUB_TOKEN_URL}?{query}", headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as resp:
             token = json.load(resp).get("token", "")
         if not token:
             return budget
-        conn = http.client.HTTPSConnection(DOCKERHUB_REGISTRY, timeout=timeout)
+        conn = http.client.HTTPSConnection(
+            DOCKERHUB_REGISTRY, timeout=timeout, context=ssl_context()
+        )
         try:
             conn.request(
                 "HEAD",

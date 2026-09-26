@@ -6,7 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- **A CA-bundle fallback for TLS.** Some standalone Python builds (including the
+  ones `uv` and `pipx` install on macOS) ship without a certificate bundle, so
+  every registry request failed with `CERTIFICATE_VERIFY_FAILED`. The client now
+  loads a system CA bundle when Python's default trust store is empty, while
+  still verifying certificates. `SSL_CERT_FILE` is honoured as before.
+
+### Changed
+- **`dt layers` is now `dt inspect --digests`.** The two commands did the same
+  registry lookup and only differed in output, so they are merged into one.
+  `dt inspect` still prints the table by default; add `--digests` (`-D`) for the
+  bare one-per-line digest output that `dt layers` used to give.
+
+### Removed
+- **The `dt layers` command.** Use `dt inspect --digests` instead.
 
 ## [2.0.0] - 2026-09-26
 

@@ -26,6 +26,7 @@ from .constants import MANIFEST_ACCEPT, USER_AGENT
 from .errors import RateLimited
 from .reference import parse_image
 from .registry import RegistryClient
+from .tls import ssl_context
 
 __all__ = ["AccessResult", "check_access", "check_many", "summarize"]
 
@@ -79,7 +80,7 @@ def _head_manifest(client: RegistryClient, repo: str, ref: str, timeout: float) 
     raises, where all we want here is the verdict. HEAD also does not count
     against the pull budget, which a GET would.
     """
-    conn = http.client.HTTPSConnection(client.image.host, timeout=timeout)
+    conn = http.client.HTTPSConnection(client.image.host, timeout=timeout, context=ssl_context())
     try:
         path = f"/v2/{repo}/manifests/{urllib.parse.quote(ref, safe=':@')}"
         conn.request(

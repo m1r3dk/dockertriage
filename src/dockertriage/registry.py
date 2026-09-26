@@ -19,6 +19,7 @@ from .constants import CHUNK, DOCKERHUB_TOKEN_URL, ECR_PUBLIC_TOKEN_URL, MANIFES
 from .errors import RateLimited, RetryableError
 from .ratelimit import registry_credentials
 from .reference import ImageRef
+from .tls import ssl_context
 
 __all__ = ["RegistryClient"]
 
@@ -57,7 +58,7 @@ class RegistryClient:
             basic = base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
             headers["Authorization"] = f"Basic {basic}"
         req = urllib.request.Request(f"{url}?{query}", headers=headers)
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with urllib.request.urlopen(req, timeout=self.timeout, context=ssl_context()) as resp:
             data = json.load(resp)
         tok = data.get("token") or data.get("access_token") or ""
         if not tok:
@@ -87,7 +88,9 @@ class RegistryClient:
     def _conn(self) -> http.client.HTTPSConnection:
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = http.client.HTTPSConnection(self.image.host, timeout=self.timeout)
+            conn = http.client.HTTPSConnection(
+                self.image.host, timeout=self.timeout, context=ssl_context()
+            )
             self._local.conn = conn
         return conn
 
@@ -184,7 +187,7 @@ class RegistryClient:
         if location.startswith("/"):
             location = f"https://{self.image.host}{location}"
         req = urllib.request.Request(location, headers=headers)
-        return urllib.request.urlopen(req, timeout=self.timeout)
+        return urllib.request.urlopen(req, timeout=self.timeout, context=ssl_context())
 
     # -- typed helpers ---------------------------------------------------
     def get_manifest(self, reference: str) -> tuple[dict[str, Any], str]:

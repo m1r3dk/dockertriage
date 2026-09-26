@@ -133,7 +133,7 @@ class TestTyperCLI(unittest.TestCase):
 
     def test_commands_are_registered(self):
         result = self.runner.invoke(cli_mod.app, ["--help"])
-        for command in ("pull", "inspect", "layers"):
+        for command in ("pull", "inspect", "verify"):
             self.assertIn(command, result.output)
 
 
@@ -466,12 +466,14 @@ class TestEveryCommandIsCallable(unittest.TestCase):
 
         check(top)
 
-    def test_layers_resolves_without_touching_the_network(self):
-        """Run the real command body with the registry stubbed out."""
+    def test_inspect_digests_resolves_without_touching_the_network(self):
+        """Run the real command body (digest mode) with the registry stubbed out."""
         captured = {}
 
         class FakeLayer:
             digest = "sha256:deadbeef"
+            size = 1
+            command = "RUN x"
 
         def fake_resolve(client, os_name, arch, strict_tag=False):
             captured["strict_tag"] = strict_tag
@@ -483,7 +485,7 @@ class TestEveryCommandIsCallable(unittest.TestCase):
         try:
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                code = cli_mod.main(["layers", "alpine:3.19"])
+                code = cli_mod.main(["inspect", "--digests", "alpine:3.19"])
         finally:
             cli_mod.resolve_layers, cli_mod.RegistryClient = real_resolve, real_client
 
@@ -598,7 +600,7 @@ class TestFlagContract(unittest.TestCase):
 
     def test_every_long_flag_has_a_single_letter_short_form(self):
         missing = []
-        for command in ("pull", "inspect", "layers", "verify"):
+        for command in ("pull", "inspect", "verify"):
             for param in self._params(command):
                 every = getattr(param, "opts", [])
                 opts = [o for o in every if o.startswith("--")]
@@ -608,7 +610,7 @@ class TestFlagContract(unittest.TestCase):
         self.assertEqual(missing, [], f"long flags without a short form: {missing}")
 
     def test_short_forms_are_unique_within_a_command(self):
-        for command in ("pull", "inspect", "layers", "verify"):
+        for command in ("pull", "inspect", "verify"):
             seen = {}
             for param in self._params(command):
                 for opt in getattr(param, "opts", []):
