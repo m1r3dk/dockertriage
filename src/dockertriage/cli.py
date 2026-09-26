@@ -32,7 +32,7 @@ __all__ = ["app", "main"]
 app = typer.Typer(
     name="dockertriage",
     help="Download a Docker image and extract its full rootfs to a folder.",
-    add_completion=True,
+    add_completion=False,
     no_args_is_help=True,
     rich_markup_mode="rich",
     # Click only wires up --help by default; every flag here carries a short
@@ -609,7 +609,7 @@ def main(args: list[str] | None = None) -> int:
         argv = ["--help"]
     commands = {"pull", "inspect", "layers", "verify"}
     # App-level flags must keep reaching the app, not get shoved into `pull`.
-    app_level = {"--help", "-h", "--version", "-V", "--install-completion", "--show-completion"}
+    app_level = {"--help", "-h", "--version", "-V"}
     if argv and argv[0] not in commands and argv[0] not in app_level:
         argv = ["pull", *argv]
     try:
