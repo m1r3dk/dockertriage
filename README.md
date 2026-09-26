@@ -4,60 +4,68 @@
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Pull Docker and OCI images directly from a registry and extract their merged
+Download Docker and OCI images directly from registries and extract their merged
 root filesystem to disk.
 
-**No Docker daemon. No root privileges. Built for reliable batch triage.**
+**No Docker daemon. No root access. No running containers.**
 
 ```bash
-dt alpine:3.19 -o ./rootfs
+dt alpine:3.19
 ```
 
-`dockertriage` downloads the image manifest and layers, verifies every layer's
-SHA-256 digest, applies OCI whiteouts in order, preserves links and file modes,
-and confirms that the final root filesystem was written successfully.
+## About
 
-## Why dockertriage?
+`dockertriage` is a small Python CLI for people who need the files inside a
+container image, not a running container. It resolves image manifests, downloads
+layers, verifies layer digests, applies OCI whiteouts in order, preserves file
+modes, symlinks and hardlinks, then writes a normal directory you can inspect
+with standard tools.
 
-Use it when you need the files inside an image, not a running container:
+It is useful for:
 
-- inspect container images on systems without Docker
-- download hundreds of images from a list
-- identify private, deleted, taken-down, or missing images before downloading
-- extract a correctly merged root filesystem for security analysis
-- produce JSON reports for automation and audit trails
-- verify completion metadata and compare the extracted tree with its recorded census
+- security triage and offline image review
+- source and application file extraction from container images
+- batch image collection from lists of references
+- checking whether images are private, deleted, taken down, or missing
+- producing repeatable JSON evidence for automation and audits
+- inspecting image layers without installing Docker
 
-Unlike `docker save`, the output is not a collection of layer archives. It is
-the final merged filesystem, with whiteouts, symlinks, hardlinks, and layer
-replacement semantics applied.
+Unlike `docker save`, the output is not a stack of layer tarballs. It is the
+final merged filesystem the container would see after all layers are applied.
 
-Docker Hub and Amazon ECR Public are supported. References may use tags,
-digests, registry paths, or web URLs. Multi-platform selection, parallel layer
-downloads, JSON reports, rate-limit checks, and a Python API are included.
+## Features
+
+- Pulls from Docker Hub and Amazon ECR Public
+- Accepts tags, digests, registry references, and Docker Hub URLs
+- Extracts a complete merged rootfs without Docker
+- Downloads layers concurrently and extracts them in layer order
+- Verifies every blob against the manifest SHA-256 digest
+- Handles OCI whiteouts, opaque directories, hardlinks, symlinks, and read-only directories
+- Lets you extract only an app path with `--path` or the image `WorkingDir` with `--app`
+- Reports what filtered extraction kept and what it left outside the filter
+- Supports batch pulls from image lists with JSON reports
+- Includes `dt verify` for quick or deep checks after extraction
+- Keeps the importable library stdlib-only, with Typer/Rich used only by the CLI
 
 ## Installation
 
-### Install as a CLI tool with pipx (recommended)
-
-`dockertriage` is a command-line tool, so pipx is the cleanest way to get the
-`dt` and `dockertriage` commands on your PATH in an isolated environment:
+### Recommended: pipx
 
 ```bash
 pipx install "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git"
 ```
 
-From a local checkout:
+Run once without installing:
+
+```bash
+pipx run --spec "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git" dt alpine:3.19
+```
+
+Install from a local checkout:
 
 ```bash
 git clone https://github.com/m1r3dk/dockertriage.git
 pipx install ./dockertriage
-```
-
-Run it once without installing:
-
-```bash
-pipx run --spec "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git" dt alpine:3.19
 ```
 
 Upgrade or remove:
@@ -67,13 +75,13 @@ pipx upgrade dockertriage
 pipx uninstall dockertriage
 ```
 
-### Install with pip
+### pip
 
 ```bash
 python -m pip install "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git"
 ```
 
-Or install from a local checkout:
+Or from a local checkout:
 
 ```bash
 git clone https://github.com/m1r3dk/dockertriage.git
@@ -84,11 +92,12 @@ python -m pip install .
 Requirements:
 
 - Python 3.14 or newer
-- no Docker installation
-- no daemon or root access
+- No Docker installation
+- No Docker daemon
+- No root privileges
 
-zstd-compressed layers are handled by the standard-library `compression.zstd`
-module, which ships with Python 3.14, so no extra install is needed.
+Python 3.14 is required because zstd-compressed layers use the standard-library
+`compression.zstd` module.
 
 ## Quick start
 
@@ -98,7 +107,7 @@ Pull and extract one image:
 dt alpine:3.19
 ```
 
-The `pull` command is implied. The explicit form is equivalent:
+`pull` is implied. This is equivalent:
 
 ```bash
 dt pull alpine:3.19
@@ -117,83 +126,117 @@ Select another platform:
 dt nginx:latest --platform linux/arm64
 ```
 
-Inspect an image without downloading its layers:
+Inspect layers without downloading them:
 
 ```bash
 dt inspect python:3.12-slim
 ```
 
-For scripting, print just the layer digests, one per line:
+Print only layer digests for scripts:
 
 ```bash
 dt inspect --digests alpine:3.19
 ```
 
-## Extracting only the application
-
-A container image is mostly base OS. When you only want the application's own
-files, filter the extraction by path:
+Verify extracted images later:
 
 ```bash
-dt pull myorg/api:latest --path /app          # keep only /app
-dt pull myorg/api:latest --app                # keep the image's WorkingDir
-dt pull myorg/api:latest -P /app -P /etc/nginx   # repeatable
+dt verify ./output
 ```
 
-Every layer is still downloaded and applied in order, so whiteouts and
-overwrites land correctly. Only the files under the requested paths are
-written to disk.
+## What the output looks like
 
-### Knowing that nothing was left behind
+`dt inspect` shows the resolved image, platform, compressed layer sizes, and the
+build step for each layer:
 
-A filter that silently drops files is worse than no filter, so a filtered pull
-reports what it did against the image's own build history:
-
-```
-  keeping only: /usr/share/grafana
-  12565 files, 1354 dirs, 141 symlinks, 0 hardlinks, 0 whiteouts, 1697 filtered out
-  kept usr/share/grafana from layer(s) 1, 2, 3, 4, 5, 6, 7, 8
-  outside the filter: COPY -> ./conf (layer 5)
-  outside the filter: COPY -> /run.sh (layer 11)
-```
-
-Every `COPY` and `ADD` in the image records the path it wrote to. Any
-destination that falls outside the filter is listed, so the files a filter
-excluded are named rather than lost quietly. A path that matched nothing is
-called out as a warning, which catches a typo before it looks like an empty
-application. The same summary is stored under `filter` in `.image.json`, and
-`dt verify` repeats it so a partial tree is never mistaken for a broken one.
-
-Use `dt inspect` first to see where an image keeps its files:
-
-```
-$ dt inspect wordpress:latest
-
-library/wordpress
-:latest
+```text
+library/alpine
+:3.19
 linux/amd64
 
   #     size            step
-  1   28.4MB ██▌        BASE debian.sh --arch 'amd64' out/ 'trixie'
-  3  112.4MB ██████████ RUN apt-get install -y --no-install-recommends ...
- 22    2.4KB ▏          COPY --chown=www-data wp-config-docker.php /usr/src/wordpress/
- 23    1.7KB ▏          COPY docker-entrypoint.sh /usr/local/bin/
+  1    3.3MB ██████████ ADD alpine-minirootfs-3.19.9-x86_64.tar.gz /
 
-24 layers  262.0MB compressed
-entrypoint docker-entrypoint.sh
-cmd        apache2-foreground
-workdir    /var/www/html -> dt pull --app
+1 layer  3.3MB compressed
+cmd        /bin/sh
+workdir    not set by this image
 ```
 
-The bar makes the heavy layers obvious, and the `COPY` lines show where the
-build put its own content. That image is also a good example of why the
-coverage report matters: its `WorkingDir` is `/var/www/html`, but the WordPress
-source ships in `/usr/src/wordpress`, so `--app` alone would hand back an empty
-folder and say so.
+`dt pull` uses the same layer row format while downloading and extracting:
+
+```text
+library/alpine
+:3.19
+linux/amd64
+
+1 layer  3.3MB compressed  (resolved in 3.05s)
+
+             ██████████ downloading 3.3MB/3.3MB (100%)
+  1    3.3MB ██████████ ADD alpine-minirootfs-3.19.9-x86_64.tar.gz /
+
+90 files, 101 dirs, 335 symlinks, 0 hardlinks, 0 whiteouts
+done in 4.68s (fetch+extract 1.62s)
+```
+
+The final destination path is written to standard output. Progress and details
+are written to standard error, so command substitution is safe:
+
+```bash
+ROOTFS=$(dt alpine:3.19 -q)
+grep -R "example" "$ROOTFS"
+```
+
+## Extract only application files
+
+Most container images contain a base OS, package manager files, shared
+libraries, certificates, and runtime dependencies. If you only want application
+files, filter the extraction.
+
+```bash
+dt pull myorg/api:latest --path /app
+dt pull myorg/api:latest --app
+dt pull myorg/api:latest -P /app -P /etc/nginx
+```
+
+- `--path /app` keeps only that path. It can be repeated.
+- `--app` keeps the image's declared `WorkingDir`.
+- Every layer is still downloaded and applied in order so overwrites and
+  whiteouts are handled correctly.
+- Only matching files are written to disk.
+
+A filtered pull reports what was kept and what build steps wrote outside the
+filter. That prevents a partial extraction from silently looking complete.
+
+```text
+keeping only /app
+12 files, 3 dirs, 4 symlinks, 0 hardlinks, 0 whiteouts, 763 filtered out
+kept app from layer(s) 8, 9, 10
+outside the filter: COPY -> /usr/local/bin/docker-entrypoint.sh (layer 5)
+outside the filter: COPY -> /etc/nginx/nginx.conf (layer 11)
+```
+
+Use `dt inspect` before pulling when you are not sure where the app lives. Look
+for `COPY`, `ADD`, and `workdir` lines.
+
+## Why extracted images have many symlinks
+
+Docker images are Linux root filesystems. Symlinks are normal and expected.
+Examples include:
+
+- `/bin/sh -> busybox`
+- `/usr/bin/python -> python3`
+- shared library links under `/lib` and `/usr/lib`
+- package-manager shortcuts
+- `node_modules/.bin/*` links to package executables
+
+`dockertriage` preserves symlinks instead of flattening them because resolving
+or copying targets would change what the container sees at runtime. If you only
+care about source code, use `--app` or `--path` and read the filter report for
+links that point outside the kept paths.
 
 ## Batch downloads
 
-Create a file containing one image reference per line:
+Create an image list:
 
 ```text
 # images.txt
@@ -204,156 +247,96 @@ https://hub.docker.com/_/nginx
 public.ecr.aws/docker/library/ubuntu:24.04
 ```
 
-Download the list:
+Pull every image in the list:
 
 ```bash
 dt -f images.txt
 ```
 
-Batch output defaults to `./output/`. Use `-o` to change it:
+Batch output defaults to `./output/`. Use options to tune concurrency and write
+a report:
 
 ```bash
 dt -f images.txt -o ./rootfs -c 4 -j 8 -r pull-report.json
 ```
 
-- `-c 4` downloads up to four images concurrently
-- `-j 8` downloads up to eight layers per image concurrently
-- `-r` writes JSON totals, per-image results, and an `unattempted` count if a
-  run stops early
+- `-c 4` pulls up to four images at once
+- `-j 8` downloads up to eight layers per image
+- `-r` writes JSON totals and per-image results
 
-Blank lines, comments, duplicate entries, stray quotes, and trailing commas in
-the input file are handled automatically.
+Blank lines, comments, duplicate entries, stray quotes, and trailing commas are
+handled automatically.
 
-### Accessibility preflight
+Before downloading a batch, Docker Hub references are checked for accessibility.
+Private, deleted, taken-down, or missing tags are skipped and listed in
+`output/not-downloaded.txt`.
 
-Before a multi-image batch starts, `dockertriage` checks the complete list and
-reports which references the registry will serve:
+Disable that preflight with `--no-check-access` or `-N`.
 
-```text
-checking access for 100 images (no pull budget used)...
-  70/100 accessible, 30 not
-    24 private, deleted, or taken down
-    6 tags do not exist
-```
+## Verification
 
-Only the 70 accessible images are downloaded. The other 30 are recorded in:
+Verification is automatic on every pull.
 
-```text
-output/not-downloaded.txt
-```
+### Layer verification
 
-Each line contains the image and the reason it was skipped:
+Every downloaded blob is streamed through SHA-256. The calculated digest must
+match the digest declared by the manifest. This is enabled by default with
+`--verify` and can be disabled with `--no-verify`.
 
-```text
-private/example  # private/example is private, deleted, or taken down
-alpine:no-such-tag  # library/alpine has no tag 'no-such-tag'
-```
+### Output verification
 
-The file remains a valid input list and can be retried later:
+After extraction, `.image.json` is written and checked. A quick check confirms:
 
-```bash
-dt -f output/not-downloaded.txt
-```
+- destination exists
+- `.image.json` parses
+- pull is marked complete
+- layers are recorded
+- rootfs is not empty
 
-Disable the preflight with `--no-check-access` or `-N`.
-
-## How verification works
-
-Verification is automatic on every pull. It has two independent stages.
-
-### 1. Layer integrity verification
-
-Each downloaded blob is streamed through SHA-256. Its calculated digest must
-match the digest declared by the image manifest before extraction succeeds.
-This is enabled by default with `--verify` and can be disabled with
-`--no-verify`.
-
-### 2. Extracted output verification
-
-After the final layer is applied, `dockertriage` atomically writes
-`.image.json` and checks that:
-
-- the destination directory exists
-- `.image.json` is valid JSON
-- the pull is marked complete
-- the extracted layers are recorded
-- the root filesystem is not empty
-
-A successful pull prints the evidence:
-
-```text
-verifying (quick):
-  ok   folder exists     library_alpine_3.19
-  ok   record readable   .image.json
-  ok   pull completed    record marked complete after the last layer
-  ok   layers recorded   1 layers
-  ok   not empty         90 files expected
-verified: 5/5 checks passed (quick)
-```
-
-Use `--deep` to walk the extracted tree and compare its file, directory,
-symlink, and byte counts with the census recorded at extraction time:
-
-```bash
-dt alpine:3.19 --deep
-dt verify ./output --deep
-```
-
-Deep verification detects changes that alter aggregate file, directory,
-symlink, or byte counts. It does not hash every extracted file, so a same-size
-content replacement is outside its scope.
-
-### Verify a batch later
-
-Verify every extracted directory currently present:
+Run verification later:
 
 ```bash
 dt verify ./output
 ```
 
-For a complete answer, include the original list. This also catches images that
-never created an output directory:
+Include the original list to catch images that never created an output folder:
 
 ```bash
 dt verify ./output -f images.txt
 ```
 
-Write a JSON report or create a retry list:
+Use `--deep` to walk the extracted tree and compare file, directory, symlink,
+and byte counts against the census recorded at extraction time:
 
 ```bash
-dt verify ./output -f images.txt -r verify-report.json
-dt verify ./output -f images.txt -F -q > retry.txt
-dt -f retry.txt
+dt verify ./output --deep
 ```
 
-The command exits with status `1` if any requested image is missing,
-incomplete, or mismatched.
+Deep verification detects changed aggregate counts. It does not hash every
+extracted file, so a same-size content replacement is outside its scope.
 
 ## Command reference
 
 | Command | Purpose |
-|---|---|
+| --- | --- |
 | `dt IMAGE` | Pull and extract one image. `pull` is implied. |
 | `dt pull IMAGE` | Explicit single-image pull. |
-| `dt pull IMAGE --path P` | Extract only path `P`, with a coverage report. |
+| `dt pull IMAGE --path P` | Extract only path `P` and report coverage. |
 | `dt pull IMAGE --app` | Extract only the image's `WorkingDir`. |
 | `dt -f FILE` | Preflight, pull, and verify an image list. |
 | `dt verify PATH` | Verify previously extracted images. |
-| `dt inspect IMAGE` | Display layer sizes and build commands without downloading layers. |
-| `dt inspect --digests IMAGE` | Print layer digests, one per line, for scripting. |
-| `dt --help` | Show all commands. |
-| `dt COMMAND --help` | Show command-specific options. |
+| `dt inspect IMAGE` | Show layer sizes and build commands without downloading layers. |
+| `dt inspect --digests IMAGE` | Print layer digests, one per line. |
+| `dt --help` | Show top-level help. |
+| `dt COMMAND --help` | Show command help. |
 
-Run `dt pull --help` or `dt verify --help` for the full option reference.
+Run `dt pull --help`, `dt inspect --help`, or `dt verify --help` for the full
+option list.
 
-## Docker Hub credentials and rate limits
+## Credentials and rate limits
 
-Anonymous Docker Hub pulls are rate-limited. Batch mode checks the available
-pull budget before downloading so a large run does not fail unexpectedly
-halfway through.
-
-Set Docker Hub credentials to raise the rate limit or access repositories your
-account can pull:
+Anonymous Docker Hub pulls are rate-limited. Set Docker Hub credentials to raise
+the limit or access repositories your account can pull:
 
 ```bash
 export DOCKERHUB_USERNAME="your-username"
@@ -363,23 +346,6 @@ dt -f images.txt -c 4
 
 Credentials are read only from environment variables. They are not written to
 reports or output metadata.
-
-## Output and automation
-
-A batch creates one directory per successfully extracted image under
-`./output/` by default. Each directory contains the merged root filesystem and
-a `.image.json` record with the resolved reference, platform, image
-configuration, layers, completion state, extraction statistics, and tree
-census. Inaccessible references are listed in `output/not-downloaded.txt`.
-
-The final destination path is written to standard output. Progress and
-verification details are written to standard error, so command substitution
-remains safe:
-
-```bash
-ROOTFS=$(dt alpine:3.19 -q)
-grep -R "example" "$ROOTFS"
-```
 
 ## Python API
 
@@ -393,17 +359,24 @@ if not result.ok:
     raise RuntimeError(result.problems)
 ```
 
-The library modules use the Python standard library. Typer and Rich are loaded
-only by the command-line interface.
+The library modules use only the Python standard library. CLI dependencies are
+loaded only by the CLI.
 
 ## Safety and correctness
 
 The extractor handles OCI whiteouts, opaque directories, symlinks, hardlinks,
-type transitions between layers, read-only directories, and BuildKit
-attestation entries. Archive paths and link targets are confined to the
-destination. CI runs on Python 3.14, runs the unit suite without
-network access, checks packaging and types, and compares real extractions with
-`crane export`.
+type transitions between layers, read-only directories, and BuildKit attestation
+entries. Archive paths and link targets are confined to the destination.
+
+CI checks include:
+
+- unit and CLI tests on Python 3.14
+- offline tests with socket access blocked
+- Ruff formatting and linting
+- mypy type checking
+- wheel build and console-script smoke tests
+- macOS and Windows offline test runs
+- ground-truth extraction comparison against `crane export`
 
 ## Limitations
 
@@ -413,6 +386,8 @@ network access, checks packaging and types, and compares real extractions with
   privileges and they are not useful for ordinary filesystem inspection.
 - `dockertriage` extracts files. It is not a container runtime and does not run
   images.
+- Filtered extraction can intentionally omit files outside the selected path.
+  The coverage report tells you what was outside the filter.
 
 ## Development
 
@@ -421,14 +396,27 @@ git clone https://github.com/m1r3dk/dockertriage.git
 cd dockertriage
 uv sync
 uv run pytest
-uv run ruff check .
+uv run ruff check src tests
 uv run ruff format --check src tests
 uv run mypy
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines,
-[SECURITY.md](SECURITY.md) for vulnerability reporting, and
-[CHANGELOG.md](CHANGELOG.md) for release history.
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
+[CHANGELOG.md](CHANGELOG.md).
+
+## Release readiness
+
+Before changing repository visibility or publishing a release, run:
+
+```bash
+uv run ruff format --check src tests
+uv run ruff check src tests
+uv run mypy
+uv run pytest -q
+uv run python -m build
+```
+
+Then confirm the latest GitHub Actions run is green.
 
 ## License
 
