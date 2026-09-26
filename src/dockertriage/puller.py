@@ -4,8 +4,6 @@ Layers download in parallel but extract strictly in order, so a later
 layer's whiteouts always land on the base they were built against.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import shutil

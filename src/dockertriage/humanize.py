@@ -1,7 +1,5 @@
 """Formatting helpers for human-facing output."""
 
-from __future__ import annotations
-
 __all__ = ["human_bytes", "one_line"]
 
 

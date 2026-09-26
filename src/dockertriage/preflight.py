@@ -14,8 +14,6 @@ affordable: measured against `ratelimitpreview`, 6 anonymous HEADs moved
 the remaining count by zero.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import http.client
 import threading

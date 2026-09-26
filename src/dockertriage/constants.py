@@ -3,8 +3,6 @@
 Kept in one module so a new registry or media type is a single-file change.
 """
 
-from __future__ import annotations
-
 DOCKERHUB_REGISTRY = "registry-1.docker.io"
 DOCKERHUB_TOKEN_URL = "https://auth.docker.io/token"
 ECR_PUBLIC_REGISTRY = "public.ecr.aws"

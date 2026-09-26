@@ -60,7 +60,7 @@ body:
     id: platform
     attributes:
       label: OS and Python
-      placeholder: "macOS 14 arm64, Python 3.12"
+      placeholder: "macOS 14 arm64, Python 3.14"
     validations:
       required: true
 

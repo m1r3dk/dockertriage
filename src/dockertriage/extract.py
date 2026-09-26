@@ -5,8 +5,6 @@ targets may appear later in the same tar, so links are replayed after the
 walk, and every path is confined to the rootfs before it is touched.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import errno
 import os
@@ -234,18 +232,11 @@ def open_layer_stream(path: str, media_type: str) -> BinaryIO:
     """Return a readable stream for a layer blob, transparently decompressing."""
     mt = (media_type or "").lower()
     if "zstd" in mt:
-        try:
-            from compression import zstd  # type: ignore  # Python 3.14+
-        except ImportError:
-            try:
-                import zstandard  # type: ignore
-            except ImportError as exc:  # pragma: no cover - environment dependent
-                raise RuntimeError(
-                    "layer uses zstd compression, which needs Python 3.14+ "
-                    "(compression.zstd) or the 'zstandard' package"
-                ) from exc
-            dctx = zstandard.ZstdDecompressor()
-            return dctx.stream_reader(open(path, "rb"))
+        # zstd is decompressed by the standard library on Python 3.14+, which
+        # is the minimum this package supports, so no third-party package or
+        # fallback is needed.
+        from compression import zstd
+
         return zstd.ZstdFile(path, "rb")  # type: ignore[return-value]
     # tarfile's 'r|*' handles gzip/bz2/xz and uncompressed transparently.
     return open(path, "rb")

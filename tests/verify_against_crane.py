@@ -11,8 +11,6 @@ Requires `crane` on PATH (brew install crane). Everything else is stdlib.
 Exits non-zero if any image mismatches.
 """
 
-from __future__ import annotations
-
 import os
 import posixpath
 import shutil

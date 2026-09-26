@@ -8,8 +8,6 @@ library modules directly, which is why this file imports no typer.
     python3 tests/test_dockertriage.py
 """
 
-from __future__ import annotations
-
 import contextlib
 import hashlib
 import io

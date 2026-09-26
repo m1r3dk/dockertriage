@@ -5,8 +5,6 @@ failure is recorded as data. A rate limit is the one exception: it will hit
 every remaining image, so the batch stops instead of digging deeper.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import os
 import sys

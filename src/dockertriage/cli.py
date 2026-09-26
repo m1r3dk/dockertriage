@@ -8,13 +8,10 @@ core modules, which stay importable without ever touching this file.
     dt layers alpine:3.19
 """
 
-from __future__ import annotations
-
 import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -67,7 +64,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def _root(
-    version: Optional[bool] = typer.Option(
+    version: bool | None = typer.Option(
         None,
         "--version",
         "-V",
@@ -79,7 +76,7 @@ def _root(
     """Pull container images without Docker, a daemon, or root."""
 
 
-def _split_platform(platform: Optional[str], os_name: str, arch: str) -> tuple[str, str]:
+def _split_platform(platform: str | None, os_name: str, arch: str) -> tuple[str, str]:
     if not platform:
         return os_name, arch
     if "/" not in platform:
@@ -93,25 +90,25 @@ def _split_platform(platform: Optional[str], os_name: str, arch: str) -> tuple[s
 @app.command()
 def pull(
     ctx: typer.Context,
-    image: Optional[str] = typer.Argument(
+    image: str | None = typer.Argument(
         None,
         help="alpine:3.19 | nginx@sha256:... | https://hub.docker.com/r/org/repo",
         show_default=False,
     ),
-    list_file: Optional[Path] = typer.Option(
+    list_file: Path | None = typer.Option(
         None,
         "--file",
         "-f",
         help="File of image references, one per line ([cyan]-[/cyan] for stdin).",
     ),
-    output: Optional[Path] = typer.Option(
+    output: Path | None = typer.Option(
         None,
         "--output",
         "-o",
         help="Parent directory for the extracted folders "
         "[dim](default: . for one image, ./output for --file)[/dim].",
     ),
-    dest: Optional[Path] = typer.Option(
+    dest: Path | None = typer.Option(
         None,
         "--dest",
         "-d",
@@ -133,7 +130,7 @@ def pull(
         max=32,
         help="Images pulled at once when using [cyan]--file[/cyan].",
     ),
-    report: Optional[Path] = typer.Option(
+    report: Path | None = typer.Option(
         None,
         "--report",
         "-r",
@@ -157,7 +154,7 @@ def pull(
         "-t",
         help="Fail if [cyan]latest[/cyan] is missing instead of using the newest tag.",
     ),
-    platform: Optional[str] = typer.Option(
+    platform: str | None = typer.Option(
         None,
         "--platform",
         "-p",
@@ -285,7 +282,7 @@ def _pull_batch(
     output: Path,
     jobs: int,
     concurrency: int,
-    report: Optional[Path],
+    report: Path | None,
     stop_on_error: bool,
     target_os: str,
     target_arch: str,
@@ -401,12 +398,12 @@ def _pull_batch(
 
 @app.command(name="verify")
 def verify_cmd(
-    target: Optional[Path] = typer.Argument(
+    target: Path | None = typer.Argument(
         None,
         help="Folder holding the extracted images [dim](default: ./output)[/dim].",
         show_default=False,
     ),
-    list_file: Optional[Path] = typer.Option(
+    list_file: Path | None = typer.Option(
         None,
         "--file",
         "-f",
@@ -418,7 +415,7 @@ def verify_cmd(
         "-D",
         help="Re-count every file instead of trusting the completion marker.",
     ),
-    report: Optional[Path] = typer.Option(
+    report: Path | None = typer.Option(
         None,
         "--report",
         "-r",
@@ -522,7 +519,7 @@ def verify_cmd(
 @app.command()
 def inspect(
     image: str = typer.Argument(..., help="Image reference to inspect.", show_default=False),
-    platform: Optional[str] = typer.Option(
+    platform: str | None = typer.Option(
         None, "--platform", "-p", help="Target platform as os/arch."
     ),
     os_name: str = typer.Option("linux", "--os", "-O", help="Target OS."),
@@ -572,7 +569,7 @@ def inspect(
 @app.command()
 def layers(
     image: str = typer.Argument(..., help="Image reference.", show_default=False),
-    platform: Optional[str] = typer.Option(
+    platform: str | None = typer.Option(
         None, "--platform", "-p", help="Target platform as os/arch."
     ),
     strict_tag: bool = typer.Option(

@@ -4,8 +4,6 @@ Two traps live here: buildkit attestation entries masquerade as platforms,
 and config history contains metadata-only steps with no layer behind them.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from .constants import INDEX_TYPES

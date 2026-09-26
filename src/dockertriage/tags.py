@@ -3,8 +3,6 @@
 Used to recover when the 'latest' we assumed does not exist.
 """
 
-from __future__ import annotations
-
 import re
 
 __all__ = ["natural_key", "newest_tag"]

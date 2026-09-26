@@ -1,7 +1,7 @@
 # dockertriage
 
 [![CI](https://github.com/m1r3dk/dockertriage/actions/workflows/ci.yml/badge.svg)](https://github.com/m1r3dk/dockertriage/actions/workflows/ci.yml)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Pull Docker and OCI images directly from a registry and extract their merged
@@ -47,12 +47,6 @@ downloads, JSON reports, rate-limit checks, and a Python API are included.
 pipx install "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git"
 ```
 
-With the optional zstd extra:
-
-```bash
-pipx install "dockertriage[zstd] @ git+https://github.com/m1r3dk/dockertriage.git"
-```
-
 From a local checkout:
 
 ```bash
@@ -89,16 +83,12 @@ python -m pip install .
 
 Requirements:
 
-- Python 3.9 or newer
+- Python 3.14 or newer
 - no Docker installation
 - no daemon or root access
 
-For zstd-compressed layers on Python versions before 3.14, install the optional
-extra:
-
-```bash
-python -m pip install ".[zstd]"
-```
+zstd-compressed layers are handled by the standard-library `compression.zstd`
+module, which ships with Python 3.14, so no extra install is needed.
 
 ## Quick start
 
@@ -342,7 +332,7 @@ only by the command-line interface.
 The extractor handles OCI whiteouts, opaque directories, symlinks, hardlinks,
 type transitions between layers, read-only directories, and BuildKit
 attestation entries. Archive paths and link targets are confined to the
-destination. CI covers Python 3.9 through 3.13, runs the unit suite without
+destination. CI runs on Python 3.14, runs the unit suite without
 network access, checks packaging and types, and compares real extractions with
 `crane export`.
 
@@ -352,7 +342,6 @@ network access, checks packaging and types, and compares real extractions with
   are not yet supported.
 - Device and FIFO entries are skipped because creating them requires elevated
   privileges and they are not useful for ordinary filesystem inspection.
-- zstd layers require Python 3.14+ or `dockertriage[zstd]`.
 - `dockertriage` extracts files. It is not a container runtime and does not run
   images.
 

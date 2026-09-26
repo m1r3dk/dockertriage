@@ -1,5 +1,3 @@
-"""Single source of version truth, imported by both CLIs and the package."""
+"""Single source of version truth, imported by the CLI and the package."""
 
-from __future__ import annotations
-
-__version__ = "1.1.0"
+__version__ = "2.0.0"

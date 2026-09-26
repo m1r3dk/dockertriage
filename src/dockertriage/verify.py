@@ -12,8 +12,6 @@ reached the end. `rootfs` in it is a census of the tree taken immediately
 after extraction, which is what makes a later count meaningful.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import os
@@ -99,7 +97,7 @@ def read_record(dest: str) -> dict[str, Any] | None:
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     return data if isinstance(data, dict) else None
 

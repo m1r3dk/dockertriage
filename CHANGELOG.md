@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 Nothing yet.
 
+## [2.0.0] - 2026-09-26
+
+### Changed
+- **Minimum Python is now 3.14.** Support for 3.9 through 3.13 is dropped. This
+  lets the code drop every compatibility shim it carried for older versions:
+  the `from __future__ import annotations` imports, the `typing.Optional`
+  workaround in the CLI (now written as `X | None`), and the `zstandard`
+  fallback for zstd layers.
+
+### Removed
+- **The `zstd` optional extra.** zstd-compressed layers are now decompressed by
+  the standard-library `compression.zstd` module, which ships with Python 3.14.
+  `pip install "dockertriage[zstd]"` is no longer needed or accepted; plain
+  `pip install dockertriage` covers every layer type.
+
 ## [1.1.0] - 2026-09-25
 
 ### Added

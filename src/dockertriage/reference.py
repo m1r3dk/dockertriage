@@ -4,8 +4,6 @@ Accepts bare names, tags, digests and the web URLs people actually copy out
 of a browser, because those are what land in an image list.
 """
 
-from __future__ import annotations
-
 import urllib.parse
 
 from .constants import DOCKERHUB_REGISTRY, ECR_PUBLIC_REGISTRY

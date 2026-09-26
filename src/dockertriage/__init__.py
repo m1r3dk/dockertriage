@@ -7,8 +7,6 @@ re-exports; everything else is an implementation detail and may move.
     dest = pull("alpine:3.19", "./out")
 """
 
-from __future__ import annotations
-
 from .batch import BatchResult, pull_many, read_image_list
 from .errors import RateLimited
 from .extract import ExtractStats, extract_layer, open_layer_stream, safe_join, safe_relpath

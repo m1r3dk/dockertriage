@@ -6,8 +6,6 @@ Typer is a hard dependency, so nothing here is conditional.
     python3 -m pytest tests/test_cli.py
 """
 
-from __future__ import annotations
-
 import contextlib
 import hashlib
 import io

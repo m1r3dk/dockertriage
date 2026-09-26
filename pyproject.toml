@@ -7,7 +7,7 @@ name = "dockertriage"
 dynamic = ["version"]
 description = "Download a Docker image and extract its full rootfs to a folder. No daemon, no root."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.14"
 license = { text = "MIT" }
 authors = [{ name = "Kishan Lal", email = "kishan.lal@m1r3dk.com" }]
 maintainers = [{ name = "Kishan Lal", email = "kishan.lal@m1r3dk.com" }]
@@ -20,11 +20,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: System :: Archiving :: Packaging",
     "Topic :: Security",
     "Typing :: Typed",
@@ -32,10 +28,9 @@ classifiers = [
 
 # The CLI is typer. The library modules themselves import nothing outside the
 # standard library, so `import dockertriage` in someone else's code stays cheap.
+# zstd layers are handled by the standard-library compression.zstd module, which
+# is part of Python 3.14, so there is no optional dependency for it.
 dependencies = ["typer>=0.12"]
-
-[project.optional-dependencies]
-zstd = ["zstandard>=0.22"]
 
 [dependency-groups]
 # `uv sync` installs these; `pip install dockertriage` does not.
@@ -74,7 +69,7 @@ Issues = "https://github.com/m1r3dk/dockertriage/issues"
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -82,13 +77,13 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.per-file-ignores]
 # The public API surface is re-exported deliberately.
 "src/dockertriage/__init__.py" = ["F401"]
-# Typer's API *is* calls-in-defaults, and Optional[X] is required while we
-# support 3.9, where `X | None` in a runtime-evaluated signature breaks.
-"src/dockertriage/cli.py" = ["B008", "UP045"]
+# Typer's API *is* calls-in-defaults, so B008 (function call in a default
+# argument) is how every option is declared.
+"src/dockertriage/cli.py" = ["B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.14"
 files = ["src"]

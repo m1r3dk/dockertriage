@@ -4,8 +4,6 @@ One token, one connection per thread, and a hard rule: never forward the
 registry Authorization header to the CDN a blob redirect points at.
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 import http.client

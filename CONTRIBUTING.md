@@ -11,7 +11,7 @@ Security problems go through [SECURITY.md](SECURITY.md), not a public issue.
 These are the constraints that define the product. A change that breaks one
 of them is a different tool, so each is enforced by CI rather than by review:
 
-1. Every module under `src/dockertriage/` except `cli.py` stays Python 3.9+
+1. Every module under `src/dockertriage/` except `cli.py` stays Python 3.14+
    standard library only, and `import dockertriage` must not pull in Typer.
    Someone embedding the library should not pay for a CLI they never call.
 2. `src/dockertriage/cli.py` is the only module allowed third-party imports,
