@@ -9,6 +9,8 @@ description = "Download a Docker image and extract its full rootfs to a folder. 
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+authors = [{ name = "Kishan Lal", email = "kishan.lal@m1r3dk.com" }]
+maintainers = [{ name = "Kishan Lal", email = "kishan.lal@m1r3dk.com" }]
 keywords = ["docker", "oci", "registry", "rootfs", "container", "extract"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -16,9 +18,16 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: System :: Archiving :: Packaging",
     "Topic :: Security",
+    "Typing :: Typed",
 ]
 
 # The CLI is typer. The library modules themselves import nothing outside the
@@ -58,7 +67,9 @@ include = [
 
 [project.urls]
 Homepage = "https://github.com/m1r3dk/dockertriage"
+Documentation = "https://github.com/m1r3dk/dockertriage#readme"
 Source = "https://github.com/m1r3dk/dockertriage"
+Changelog = "https://github.com/m1r3dk/dockertriage/blob/main/CHANGELOG.md"
 Issues = "https://github.com/m1r3dk/dockertriage/issues"
 
 [tool.ruff]
