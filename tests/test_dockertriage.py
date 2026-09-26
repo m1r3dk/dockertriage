@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import dockertriage as dp
 from dockertriage import batch as batch_mod
+from dockertriage import coverage as coverage_mod
 from dockertriage import preflight as preflight_mod
 from dockertriage import puller as puller_mod
 from dockertriage import ratelimit as ratelimit_mod
@@ -1674,6 +1675,145 @@ class TestBatchSkipsUnreachableImages(unittest.TestCase):
         body = open(os.path.join(self.root, "not-downloaded.txt")).read()
         self.assertIn("https://hub.docker.com/r/someone/gone", body)
         self.assertNotIn("https://hub.docker.com/r/someone/alive", body)
+
+
+class TestPathFilter(TempRoot):
+    """Extracting part of an image must keep exactly that part.
+
+    The risk of a filter is silent loss: files vanish and nothing says so.
+    These pin the boundaries where that would happen.
+    """
+
+    def filtered(self, entries, paths) -> tuple[dp.ExtractStats, int]:
+        stats = dp.ExtractStats()
+        pf = dp.PathFilter(paths)
+        added = dp.extract_layer(make_layer(entries), self.root, stats, path_filter=pf)
+        return stats, added
+
+    def test_only_the_wanted_subtree_is_written(self):
+        entries = [
+            ("app", "d", None),
+            ("app/main.py", "f", "print(1)"),
+            ("usr", "d", None),
+            ("usr/bin/ls", "f", "binary"),
+            ("etc/passwd", "f", "root:x:0:0"),
+        ]
+        stats, _ = self.filtered(entries, ["/app"])
+        self.assertTrue(os.path.exists(self.p("app/main.py")))
+        self.assertFalse(os.path.exists(self.p("usr/bin/ls")))
+        self.assertFalse(os.path.exists(self.p("etc/passwd")))
+        self.assertTrue(stats.filtered > 0)
+
+    def test_leading_slash_and_bare_name_mean_the_same_path(self):
+        entries = [("app/main.py", "f", "x")]
+        for spec in ("/app", "app", "/app/"):
+            shutil.rmtree(self.root, ignore_errors=True)
+            os.makedirs(self.root, exist_ok=True)
+            self.filtered(entries, [spec])
+            self.assertTrue(os.path.exists(self.p("app/main.py")), f"{spec} did not match")
+
+    def test_a_sibling_with_a_shared_prefix_is_not_swept_in(self):
+        """/app must not drag in /application, which merely starts the same."""
+        entries = [
+            ("app/main.py", "f", "keep"),
+            ("application/other.py", "f", "drop"),
+        ]
+        self.filtered(entries, ["/app"])
+        self.assertTrue(os.path.exists(self.p("app/main.py")))
+        self.assertFalse(os.path.exists(self.p("application/other.py")))
+
+    def test_a_whiteout_inside_the_filter_still_deletes(self):
+        """Overlay deletes must survive filtering, or stale files come back."""
+        self.filtered([("app/old.py", "f", "gone")], ["/app"])
+        self.assertTrue(os.path.exists(self.p("app/old.py")))
+        self.filtered([("app/.wh.old.py", "f", "")], ["/app"])
+        self.assertFalse(os.path.exists(self.p("app/old.py")))
+
+    def test_a_whiteout_outside_the_filter_is_ignored(self):
+        """A delete aimed elsewhere must not be counted as work we did."""
+        stats, _ = self.filtered([("usr/.wh.thing", "f", "")], ["/app"])
+        self.assertEqual(stats.whiteouts, 0)
+        self.assertTrue(stats.filtered > 0)
+
+    def test_symlinks_inside_the_filter_survive(self):
+        entries = [("app/real.py", "f", "x"), ("app/link.py", "l", "real.py")]
+        self.filtered(entries, ["/app"])
+        self.assertTrue(os.path.islink(self.p("app/link.py")))
+
+    def test_a_hardlink_to_a_filtered_out_target_is_reported_not_hidden(self):
+        """The one way filtering can lose data, so it must be counted."""
+        entries = [
+            ("usr/share/data", "f", "payload"),
+            ("app/data", "h", "usr/share/data"),
+        ]
+        stats, _ = self.filtered(entries, ["/app"])
+        self.assertEqual(stats.unresolved_links, 1)
+        self.assertIn("filtered-out targets", str(stats))
+
+    def test_contribution_count_reports_layers_that_held_files(self):
+        _, added = self.filtered([("app/a.py", "f", "x"), ("etc/b", "f", "y")], ["/app"])
+        self.assertEqual(added, 1)
+        _, none = self.filtered([("etc/c", "f", "z")], ["/app"])
+        self.assertEqual(none, 0)
+
+    def test_no_filter_extracts_everything(self):
+        """The default path must be untouched by the feature."""
+        stats = self.apply([("etc/passwd", "f", "root"), ("app/main.py", "f", "x")])
+        self.assertTrue(os.path.exists(self.p("etc/passwd")))
+        self.assertTrue(os.path.exists(self.p("app/main.py")))
+        self.assertEqual(stats.filtered, 0)
+
+
+class TestCoverageReport(unittest.TestCase):
+    """The report is the answer to "did I miss anything?", so it must be honest."""
+
+    def test_copy_and_add_destinations_are_recovered(self):
+        cmds = [
+            "ADD alpine-minirootfs.tar.gz / # buildkit",
+            "RUN /bin/sh -c apk add curl",
+            "COPY docker-entrypoint.sh /usr/local/bin/ # buildkit",
+            "COPY --from=builder /build/dist /app # buildkit",
+        ]
+        found = coverage_mod.copy_destinations(cmds)
+        self.assertEqual([d.path for d in found], ["/", "/usr/local/bin/", "/app"])
+        # --from=builder must not be mistaken for the destination.
+        self.assertEqual(found[-1].verb, "COPY")
+
+    def test_a_destination_outside_the_filter_is_flagged(self):
+        cmds = ["COPY . /app # buildkit", "COPY run.sh /run.sh # buildkit"]
+        report = coverage_mod.build_report(("app",), cmds, {"app": 5}, {0: 5})
+        self.assertFalse(report.clean)
+        self.assertEqual([d.path for d in report.uncovered], ["/run.sh"])
+
+    def test_everything_inside_the_filter_reports_clean(self):
+        cmds = ["COPY . /app # buildkit", "COPY x /app/sub # buildkit"]
+        report = coverage_mod.build_report(("app",), cmds, {"app": 9}, {0: 9})
+        self.assertTrue(report.clean)
+        self.assertEqual(report.uncovered, [])
+
+    def test_a_path_that_matched_nothing_is_called_out(self):
+        """A typo must not look like an image that simply has no app."""
+        report = coverage_mod.build_report(("typo",), [], {"typo": 0}, {})
+        self.assertEqual(report.empty_paths, ["typo"])
+        self.assertFalse(report.clean)
+        self.assertTrue(any("matched nothing" in line for line in report.lines()))
+
+    def test_unresolved_links_make_the_report_unclean(self):
+        report = coverage_mod.build_report(("app",), [], {"app": 3}, {0: 3}, unresolved_links=2)
+        self.assertFalse(report.clean)
+        self.assertTrue(any("hardlink" in line for line in report.lines()))
+
+    def test_working_dir_treats_root_as_unset(self):
+        """Filtering on '/' would keep everything, so it cannot count as an app dir."""
+        self.assertEqual(coverage_mod.working_dir({"config": {"WorkingDir": "/app"}}), "/app")
+        self.assertEqual(coverage_mod.working_dir({"config": {"WorkingDir": "/"}}), "")
+        self.assertEqual(coverage_mod.working_dir({"config": {}}), "")
+        self.assertEqual(coverage_mod.working_dir({}), "")
+
+    def test_a_copy_into_a_parent_of_the_filter_still_counts_as_covered(self):
+        """`COPY . /` does deliver /app/main.py when the filter is /app."""
+        report = coverage_mod.build_report(("app",), ["COPY . / # buildkit"], {"app": 2}, {0: 2})
+        self.assertTrue(report.clean)
 
 
 if __name__ == "__main__":

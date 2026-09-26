@@ -11,10 +11,12 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 
+from . import coverage
 from .constants import IMAGE_META_NAME, LAYER_CACHE_NAME
-from .extract import ExtractStats, extract_layer, open_layer_stream
+from .extract import ExtractStats, PathFilter, extract_layer, open_layer_stream
 from .humanize import human_bytes, one_line
 from .manifest import resolve_layers
 from .reference import parse_image
@@ -35,6 +37,8 @@ def pull(
     dest_override: str | None = None,
     verify: bool = True,
     strict_tag: bool = False,
+    paths: Sequence[str] | None = None,
+    use_workdir: bool = False,
 ) -> str:
     started = time.time()
 
@@ -49,12 +53,29 @@ def pull(
         layers, config = resolve_layers(client, os_name, arch, strict_tag)
         resolve_s = time.time() - t0
         total_bytes = sum(layer.size for layer in layers)
+
+        # Build the path filter, if one was asked for. --app resolves against
+        # the image's own WorkingDir, and fails loudly when the image does not
+        # declare one rather than silently extracting the whole filesystem.
+        wanted_paths: list[str] = list(paths or [])
+        if use_workdir:
+            workdir = coverage.working_dir(config)
+            if not workdir:
+                raise RuntimeError(
+                    f"{image.pretty} declares no WorkingDir, so there is no app "
+                    "directory to infer. Pass --path explicitly."
+                )
+            wanted_paths.append(workdir)
+        path_filter = PathFilter(wanted_paths) if wanted_paths else None
+
         if image.ref_inferred:
             log(f"  no 'latest' tag; using {image.ref}")
         log(
             f"{image.pretty} -> {len(layers)} layers, "
             f"{human_bytes(total_bytes)} compressed (resolved in {resolve_s:.2f}s)"
         )
+        if path_filter:
+            log(f"  keeping only: {', '.join('/' + p for p in path_filter.paths)}")
 
         dest = os.path.abspath(dest_override or os.path.join(out_dir, image.folder_name))
         if os.path.exists(dest):
@@ -107,6 +128,9 @@ def pull(
         # Download every layer concurrently, but extract strictly in order so
         # each layer's whiteouts and overwrites land on the correct base.
         stats = ExtractStats()
+        # layer index -> entries it put into the output. Only meaningful under a
+        # filter, where it shows which layers actually held the wanted files.
+        layer_hits: dict[int, int] = {}
         with ThreadPoolExecutor(max_workers=max(1, min(jobs, len(layers)))) as pool:
             futures = [
                 pool.submit(client.download_blob, layer.digest, blob_paths[i], on_chunk, verify)
@@ -124,7 +148,9 @@ def pull(
                         f"  [{i + 1}/{len(layers)}] extract {human_bytes(layer.size):>8}  {command}"
                     )
                     with open_layer_stream(blob_paths[i], layer.media_type) as stream:
-                        extract_layer(stream, dest, stats)
+                        added = extract_layer(stream, dest, stats, path_filter=path_filter)
+                    if added:
+                        layer_hits[i] = added
                     if not keep_tar:
                         try:
                             os.remove(blob_paths[i])
@@ -142,6 +168,17 @@ def pull(
             shutil.rmtree(cache_dir, ignore_errors=True)
 
         image_cfg = config.get("config") or {}
+        # Under a filter, check the result against the image's own history so
+        # the user is told what was left out instead of having to guess.
+        report = None
+        if path_filter:
+            report = coverage.build_report(
+                path_filter.paths,
+                [layer.command for layer in layers],
+                path_filter.match_counts(),
+                layer_hits,
+                stats.unresolved_links,
+            )
         meta = {
             "image": image.pretty,
             "registry": image.registry,
@@ -161,6 +198,10 @@ def pull(
             "layer_count": len(layers),
             "compressed_bytes": total_bytes,
             "verified_digests": bool(verify),
+            # Present only for a filtered pull. Its absence means "whole image",
+            # which is what lets `dt verify` tell a partial tree from a broken
+            # one instead of calling every filtered pull incomplete.
+            "filter": report.as_dict() if report else None,
             # Written last, so this key can only be true if every layer was
             # downloaded, verified and extracted.
             "complete": True,
@@ -168,6 +209,9 @@ def pull(
         _write_record(dest, meta)
 
         log(f"  {stats}")
+        if report:
+            for line in report.lines():
+                log(f"  {line}")
         log(f"done in {time.time() - started:.2f}s (fetch+extract {work_s:.2f}s)")
         return dest
     finally:

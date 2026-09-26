@@ -9,7 +9,14 @@ re-exports; everything else is an implementation detail and may move.
 
 from .batch import BatchResult, pull_many, read_image_list
 from .errors import RateLimited
-from .extract import ExtractStats, extract_layer, open_layer_stream, safe_join, safe_relpath
+from .extract import (
+    ExtractStats,
+    PathFilter,
+    extract_layer,
+    open_layer_stream,
+    safe_join,
+    safe_relpath,
+)
 from .manifest import Layer, pick_platform_manifest, resolve_layers
 from .preflight import AccessResult, check_access, check_many
 from .puller import pull
@@ -37,6 +44,7 @@ __all__ = [
     "ExtractStats",
     "ImageRef",
     "Layer",
+    "PathFilter",
     "RateBudget",
     "RateLimited",
     "RegistryClient",

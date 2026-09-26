@@ -11,12 +11,14 @@ import os
 import posixpath
 import shutil
 import tarfile
+from collections.abc import Iterable
 from typing import BinaryIO
 
 from .constants import CHUNK
 
 __all__ = [
     "ExtractStats",
+    "PathFilter",
     "apply_whiteout",
     "extract_layer",
     "open_layer_stream",
@@ -99,23 +101,95 @@ class ExtractStats:
     hardlinks: int = 0
     whiteouts: int = 0
     skipped: int = 0
+    # Entries a path filter excluded. Counted apart from `skipped`, which means
+    # "this entry was unusable"; filtered means "deliberately not wanted".
+    filtered: int = 0
+    # Hardlinks kept by the filter whose target fell outside it, so the content
+    # could not be materialised. The one way filtering can drop real data, and
+    # it is surfaced rather than hidden.
+    unresolved_links: int = 0
 
     def as_dict(self) -> dict[str, int]:
         return dataclasses.asdict(self)
 
     def __str__(self) -> str:
-        return (
+        base = (
             f"{self.files} files, {self.dirs} dirs, {self.symlinks} symlinks, "
             f"{self.hardlinks} hardlinks, {self.whiteouts} whiteouts"
         )
+        if self.filtered:
+            base += f", {self.filtered} filtered out"
+        if self.unresolved_links:
+            base += f", {self.unresolved_links} links to filtered-out targets"
+        return base
+
+
+class PathFilter:
+    """Decides which archive paths a filtered extraction is allowed to write.
+
+    A path is kept when it is one of the wanted paths, sits underneath one, or
+    is a parent directory of one. Parents are kept because `/app` cannot be
+    created without `/app`'s own directory entry, and dropping them would leave
+    the wanted files nowhere to land.
+    """
+
+    __slots__ = ("paths", "_kept_per_prefix")
+
+    def __init__(self, paths: Iterable[str]):
+        cleaned: list[str] = []
+        for raw in paths:
+            # Accept '/app', 'app', and '/app/' as the same request.
+            norm = safe_relpath(raw)
+            if norm:
+                cleaned.append(norm)
+        self.paths = tuple(dict.fromkeys(cleaned))  # de-duplicate, keep order
+        # How many entries each requested path actually matched, so a caller can
+        # report a path that matched nothing instead of silently returning empty.
+        self._kept_per_prefix: dict[str, int] = dict.fromkeys(self.paths, 0)
+
+    def __bool__(self) -> bool:
+        return bool(self.paths)
+
+    def wants(self, rel_posix: str) -> bool:
+        """True if this archive path should be written to disk."""
+        if not self.paths:
+            return True
+        for prefix in self.paths:
+            if rel_posix == prefix or rel_posix.startswith(prefix + "/"):
+                self._kept_per_prefix[prefix] += 1
+                return True
+            # Keep the directories leading down to a wanted path.
+            if prefix.startswith(rel_posix + "/"):
+                return True
+        return False
+
+    def match_counts(self) -> dict[str, int]:
+        """Entries matched per requested path. A zero means the path was empty."""
+        return dict(self._kept_per_prefix)
 
 
 def extract_layer(
-    fileobj: BinaryIO, rootfs: str, stats: ExtractStats, preserve_mode: bool = True
-) -> None:
-    """Apply one layer tar onto rootfs, honouring overlayfs whiteout rules."""
+    fileobj: BinaryIO,
+    rootfs: str,
+    stats: ExtractStats,
+    preserve_mode: bool = True,
+    path_filter: PathFilter | None = None,
+) -> int:
+    """Apply one layer tar onto rootfs, honouring overlayfs whiteout rules.
+
+    When `path_filter` is given, only entries it wants are written. Every layer
+    is still read in full and in order, so whiteouts and overwrites that target
+    the wanted paths are applied correctly.
+
+    Returns the number of entries this layer contributed to the output, which
+    lets a caller report which layers actually held the requested files.
+    """
     deferred_links: list[tarfile.TarInfo] = []
     deferred_dir_modes: list[tuple[str, int]] = []
+    contributed = 0
+
+    def wanted(rel_posix: str) -> bool:
+        return path_filter is None or path_filter.wants(rel_posix)
 
     with tarfile.open(fileobj=fileobj, mode="r|*") as tf:
         for member in tf:
@@ -126,11 +200,27 @@ def extract_layer(
 
             base = posixpath.basename(rel)
             if base.startswith(".wh."):
+                # Whiteouts are evaluated against the path they delete, not the
+                # marker's own name, so a deletion inside a wanted path is still
+                # applied and one outside it is ignored.
+                if base == ".wh..wh..opq":
+                    target = posixpath.dirname(rel)
+                else:
+                    parent = posixpath.dirname(rel)
+                    stem = base[len(".wh.") :]
+                    target = posixpath.join(parent, stem) if parent else stem
+                if not wanted(target):
+                    stats.filtered += 1
+                    continue
                 try:
                     apply_whiteout(rootfs, rel)
                     stats.whiteouts += 1
                 except ValueError:
                     stats.skipped += 1
+                continue
+
+            if not wanted(rel):
+                stats.filtered += 1
                 continue
 
             try:
@@ -150,6 +240,7 @@ def extract_layer(
                 if preserve_mode:
                     deferred_dir_modes.append((dst, member.mode & 0o7777))
                 stats.dirs += 1
+                contributed += 1
                 continue
 
             if member.issym() or member.islnk():
@@ -171,6 +262,7 @@ def extract_layer(
                     shutil.copyfileobj(src, out, CHUNK)
                 src.close()
                 stats.files += 1
+                contributed += 1
                 continue
 
             stats.skipped += 1
@@ -179,6 +271,9 @@ def extract_layer(
         rel = safe_relpath(member.name)
         if rel is None:
             stats.skipped += 1
+            continue
+        if not wanted(rel):
+            stats.filtered += 1
             continue
         try:
             dst = safe_join(rootfs, rel)
@@ -192,6 +287,7 @@ def extract_layer(
             try:
                 os.symlink(member.linkname, dst)
                 stats.symlinks += 1
+                contributed += 1
             except OSError:
                 stats.skipped += 1
             continue
@@ -201,6 +297,12 @@ def extract_layer(
         if link_rel is None:
             stats.skipped += 1
             continue
+        # A hardlink inside the filter can point at a file outside it, whose
+        # content was never written. Record that rather than losing it quietly:
+        # this is the one way a filtered extraction can drop real data.
+        if path_filter is not None and not path_filter.wants(link_rel):
+            stats.unresolved_links += 1
+            continue
         try:
             src_path = safe_join(rootfs, link_rel)
         except ValueError:
@@ -209,11 +311,13 @@ def extract_layer(
         try:
             os.link(src_path, dst)
             stats.hardlinks += 1
+            contributed += 1
         except OSError as exc:
             if exc.errno in (errno.EXDEV, errno.EPERM, errno.ENOENT) and os.path.exists(src_path):
                 try:
                     shutil.copy2(src_path, dst)
                     stats.hardlinks += 1
+                    contributed += 1
                     continue
                 except OSError:
                     pass
@@ -226,6 +330,8 @@ def extract_layer(
             os.chmod(path, mode | 0o700)
         except OSError:
             pass
+
+    return contributed
 
 
 def open_layer_stream(path: str, media_type: str) -> BinaryIO:

@@ -133,6 +133,7 @@ CHECK_HELP = {
     "record readable": f"{IMAGE_META_NAME} parses as JSON",
     "pull completed": "the record is marked complete, written only after the last layer",
     "layers recorded": "the record names the layers that were pulled",
+    "path filter": "this pull kept only part of the image, and which part",
     "not empty": "the folder holds something besides our own metadata",
     "file count": "files on disk vs files recorded at extraction",
     "dir count": "directories on disk vs directories recorded",
@@ -258,6 +259,20 @@ def verify_dest(dest: str, image: str | None = None, quick: bool = False) -> Ver
         result.record("layers recorded", False, "record lists no layers")
         return result
     result.record("layers recorded", True, f"{len(layer_list)} layers")
+
+    # A filtered pull holds only part of the image on purpose. The counts it
+    # was recorded against are the filtered ones, so verification still works;
+    # say so explicitly rather than letting a partial tree look like a full one.
+    filter_meta = record.get("filter")
+    if isinstance(filter_meta, dict):
+        kept = ", ".join("/" + p.lstrip("/") for p in filter_meta.get("paths") or [])
+        detail = f"partial pull, kept {kept or 'nothing'}"
+        uncovered = filter_meta.get("uncovered_destinations") or []
+        if uncovered:
+            detail += f"; {len(uncovered)} COPY/ADD destination(s) outside it"
+        # Not a failure: the user asked for a subset and got it. Recorded as a
+        # passing check so the fact stays visible in reports and audit trails.
+        result.record("path filter", True, detail)
 
     expected_raw = record.get("rootfs")
     expected = expected_raw if isinstance(expected_raw, dict) else None

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Extract only part of an image, and know what was left out.** Container
+  images are mostly base OS, so `dt pull --path /app` (repeatable, `-P`) and
+  `dt pull --app` (the image's own `WorkingDir`) write just the files you
+  asked for. Every layer is still downloaded and applied in order, so whiteouts
+  and overwrites stay correct.
+
+  The risk of any filter is silent loss, so a filtered pull checks itself
+  against the image's build history and reports the result:
+
+  ```
+    keeping only: /usr/share/grafana
+    kept usr/share/grafana from layer(s) 1, 2, 3, 4, 5, 6, 7, 8
+    outside the filter: COPY -> ./conf (layer 5)
+    outside the filter: COPY -> /run.sh (layer 11)
+  ```
+
+  Every `COPY`/`ADD` destination outside the filter is named, a path that
+  matched nothing raises a warning, and a hardlink whose target was filtered
+  out is counted rather than dropped quietly. The summary is stored under
+  `filter` in `.image.json`, and `dt verify` reports it so a deliberately
+  partial tree is never mistaken for a broken one.
+
+- **`dt inspect` shows where an image keeps its files.** It now prints the
+  image's `WorkingDir` and every path a `COPY`/`ADD` wrote to, so choosing a
+  filter is an informed decision instead of a guess.
+
 - **A CA-bundle fallback for TLS.** Some standalone Python builds (including the
   ones `uv` and `pipx` install on macOS) ship without a certificate bundle, so
   every registry request failed with `CERTIFICATE_VERIFY_FAILED`. The client now

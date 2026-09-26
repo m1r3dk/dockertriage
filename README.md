@@ -129,6 +129,53 @@ For scripting, print just the layer digests, one per line:
 dt inspect --digests alpine:3.19
 ```
 
+## Extracting only the application
+
+A container image is mostly base OS. When you only want the application's own
+files, filter the extraction by path:
+
+```bash
+dt pull myorg/api:latest --path /app          # keep only /app
+dt pull myorg/api:latest --app                # keep the image's WorkingDir
+dt pull myorg/api:latest -P /app -P /etc/nginx   # repeatable
+```
+
+Every layer is still downloaded and applied in order, so whiteouts and
+overwrites land correctly. Only the files under the requested paths are
+written to disk.
+
+### Knowing that nothing was left behind
+
+A filter that silently drops files is worse than no filter, so a filtered pull
+reports what it did against the image's own build history:
+
+```
+  keeping only: /usr/share/grafana
+  12565 files, 1354 dirs, 141 symlinks, 0 hardlinks, 0 whiteouts, 1697 filtered out
+  kept usr/share/grafana from layer(s) 1, 2, 3, 4, 5, 6, 7, 8
+  outside the filter: COPY -> ./conf (layer 5)
+  outside the filter: COPY -> /run.sh (layer 11)
+```
+
+Every `COPY` and `ADD` in the image records the path it wrote to. Any
+destination that falls outside the filter is listed, so the files a filter
+excluded are named rather than lost quietly. A path that matched nothing is
+called out as a warning, which catches a typo before it looks like an empty
+application. The same summary is stored under `filter` in `.image.json`, and
+`dt verify` repeats it so a partial tree is never mistaken for a broken one.
+
+Use `dt inspect` first to see where an image keeps its files:
+
+```
+$ dt inspect wordpress:latest
+workdir: /var/www/html  (dt pull --app)
+content added at: /usr/local/bin/ (copy), /usr/src/wordpress/ (copy)
+```
+
+That image is a good example of why the report matters: its `WorkingDir` is
+`/var/www/html`, but the WordPress source ships in `/usr/src/wordpress`, so
+`--app` alone would hand back an empty folder and say so.
+
 ## Batch downloads
 
 Create a file containing one image reference per line:
@@ -273,6 +320,8 @@ incomplete, or mismatched.
 |---|---|
 | `dt IMAGE` | Pull and extract one image. `pull` is implied. |
 | `dt pull IMAGE` | Explicit single-image pull. |
+| `dt pull IMAGE --path P` | Extract only path `P`, with a coverage report. |
+| `dt pull IMAGE --app` | Extract only the image's `WorkingDir`. |
 | `dt -f FILE` | Preflight, pull, and verify an image list. |
 | `dt verify PATH` | Verify previously extracted images. |
 | `dt inspect IMAGE` | Display layer sizes and build commands without downloading layers. |

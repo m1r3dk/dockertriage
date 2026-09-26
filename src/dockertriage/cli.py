@@ -17,7 +17,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import batch, puller
+from . import batch, coverage, puller
 from . import verify as verify_core
 from .constants import BATCH_OUTPUT_DIR
 from .constants import SKIPPED_FILE_NAME as BATCH_SKIPPED
@@ -162,6 +162,19 @@ def pull(
     ),
     os_name: str = typer.Option("linux", "--os", "-O", help="Target OS."),
     arch: str = typer.Option("amd64", "--arch", "-a", help="Target architecture."),
+    path: list[str] = typer.Option(
+        [],
+        "--path",
+        "-P",
+        help="Keep only this path from the image. Repeatable, e.g. "
+        "[cyan]-P /app -P /etc/nginx[/cyan].",
+    ),
+    app: bool = typer.Option(
+        False,
+        "--app",
+        "-W",
+        help="Keep only the image's [cyan]WorkingDir[/cyan], where the app lives.",
+    ),
     keep_tar: bool = typer.Option(
         False,
         "--keep-tar",
@@ -214,6 +227,8 @@ def pull(
         raise _fail("pass an image or --file, not both", 2)
     if list_file and dest:
         raise _fail("--dest takes one image; use --output with --file", 2)
+    if list_file and (path or app):
+        raise _fail("--path/--app take one image, not --file", 2)
 
     if list_file:
         # A list of images means a pile of folders; keeping them out of the
@@ -240,7 +255,8 @@ def pull(
 
     assert image is not None
     try:
-        path = puller.pull(
+        # `dest_path` rather than `path`: the --path option owns that name now.
+        dest_path = puller.pull(
             image,
             str(output if output is not None else Path(".")),
             jobs=jobs,
@@ -251,6 +267,8 @@ def pull(
             dest_override=str(dest) if dest else None,
             verify=verify,
             strict_tag=strict_tag,
+            paths=path,
+            use_workdir=app,
         )
     except KeyboardInterrupt:
         _exit_code = 130
@@ -262,7 +280,7 @@ def pull(
     if check:
         # Verification runs on every pull. Show what it actually inspected,
         # because "verified" with nothing behind it is just a word.
-        outcome = verify_core.verify_dest(path, image=image, quick=not deep)
+        outcome = verify_core.verify_dest(dest_path, image=image, quick=not deep)
         if not quiet:
             console.print(f"[dim]verifying ({outcome.depth}):[/dim]")
             for line in outcome.explain():
@@ -274,7 +292,7 @@ def pull(
             console.print(f"[green]verified: {outcome.summary()}[/green]")
 
     # Plain stdout so `$(dt pull alpine -q)` stays scriptable.
-    print(path)
+    print(dest_path)
 
 
 def _pull_batch(
@@ -581,6 +599,20 @@ def inspect(
         f"[bold]{len(found)}[/bold] layers, [bold]{total}[/bold] compressed"
         f"   entrypoint={image_cfg.get('Entrypoint')}  cmd={image_cfg.get('Cmd')}"
     )
+
+    # Where the application actually lives, and every path the build copied
+    # content into. This is what makes `--path`/`--app` an informed choice
+    # rather than a guess.
+    workdir = coverage.working_dir(config)
+    if workdir:
+        stdout.print(f"workdir: [cyan]{workdir}[/cyan]  [dim](dt pull --app)[/dim]")
+    else:
+        stdout.print("workdir: [dim]not set by this image[/dim]")
+
+    destinations = coverage.copy_destinations([layer.command for layer in found])
+    if destinations:
+        shown = ", ".join(f"[cyan]{d.path}[/cyan] ({d.verb.lower()})" for d in destinations)
+        stdout.print(f"content added at: {shown}")
 
 
 def main(args: list[str] | None = None) -> int:
