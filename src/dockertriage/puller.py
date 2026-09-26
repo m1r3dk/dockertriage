@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import coverage
 from .constants import IMAGE_META_NAME, LAYER_CACHE_NAME
 from .extract import ExtractStats, PathFilter, extract_layer, open_layer_stream
-from .humanize import human_bytes, one_line
+from .humanize import INDEX_W, SIZE_W, human_bytes, layer_row, short_digest, size_bar
 from .manifest import resolve_layers
 from .reference import parse_image
 from .registry import RegistryClient
@@ -68,14 +68,25 @@ def pull(
             wanted_paths.append(workdir)
         path_filter = PathFilter(wanted_paths) if wanted_paths else None
 
+        # Header mirrors `dt inspect`: name, then reference, then platform,
+        # each on its own line so a 71-character digest never wraps.
+        log("")
+        log(image.repo)
+        if image.is_digest:
+            log(f"@{short_digest(image.ref, 16)} digest")
+        else:
+            log(f":{image.ref}")
+        log(f"{os_name}/{arch}")
         if image.ref_inferred:
-            log(f"  no 'latest' tag; using {image.ref}")
-        log(
-            f"{image.pretty} -> {len(layers)} layers, "
-            f"{human_bytes(total_bytes)} compressed (resolved in {resolve_s:.2f}s)"
-        )
+            log("no 'latest' tag; using the newest one")
         if path_filter:
-            log(f"  keeping only: {', '.join('/' + p for p in path_filter.paths)}")
+            log(f"keeping only {', '.join('/' + p for p in path_filter.paths)}")
+        log("")
+        log(
+            f"{len(layers)} {'layer' if len(layers) == 1 else 'layers'}  "
+            f"{human_bytes(total_bytes)} compressed  (resolved in {resolve_s:.2f}s)"
+        )
+        log("")
 
         dest = os.path.abspath(dest_override or os.path.join(out_dir, image.folder_name))
         if os.path.exists(dest):
@@ -109,12 +120,15 @@ def pull(
                 seen_bytes[0] += n
                 pct = 100.0 * seen_bytes[0] / total_bytes
                 done, total = human_bytes(seen_bytes[0]), human_bytes(total_bytes)
-                print(
-                    f"\r  downloading {done}/{total} ({pct:.0f}%)",
-                    end="",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                # Indented under the layer rows, with the same bar the rows
+                # use, so downloading reads as part of the same display.
+                bar = size_bar(seen_bytes[0], total_bytes)
+                # Padded to a fixed width so the shrinking percentage cannot
+                # leave a stale tail behind, but kept short enough that the
+                # line never wraps, which would strand the \r on the wrong row.
+                tail = f"downloading {done}/{total} ({pct:.0f}%)"
+                line = f"{'':>{INDEX_W}} {'':>{SIZE_W}} {bar} {tail:<34}"
+                print(f"\r{line}", end="", file=sys.stderr, flush=True)
                 progress_open[0] = True
 
         def clear_progress() -> None:
@@ -128,6 +142,9 @@ def pull(
         # Download every layer concurrently, but extract strictly in order so
         # each layer's whiteouts and overwrites land on the correct base.
         stats = ExtractStats()
+        # Scale for the per-layer bars, so pull and inspect draw them alike.
+        largest_layer = max((layer.size for layer in layers), default=0)
+        term_width = max(60, min(shutil.get_terminal_size((100, 20)).columns, 120))
         # layer index -> entries it put into the output. Only meaningful under a
         # filter, where it shows which layers actually held the wanted files.
         layer_hits: dict[int, int] = {}
@@ -143,9 +160,16 @@ def pull(
                     # error-dict plumbing is needed.
                     futures[i].result()
                     clear_progress()
-                    command = one_line(layer.command or layer.digest)
+                    # Same row layout as `dt inspect`, so the two commands
+                    # describe a layer the same way.
                     log(
-                        f"  [{i + 1}/{len(layers)}] extract {human_bytes(layer.size):>8}  {command}"
+                        layer_row(
+                            i + 1,
+                            layer.size,
+                            largest_layer,
+                            layer.command or short_digest(layer.digest),
+                            term_width,
+                        )
                     )
                     with open_layer_stream(blob_paths[i], layer.media_type) as stream:
                         added = extract_layer(stream, dest, stats, path_filter=path_filter)
@@ -208,11 +232,13 @@ def pull(
         }
         _write_record(dest, meta)
 
-        log(f"  {stats}")
+        log("")
+        log(f"{stats}")
         if report:
             for line in report.lines():
-                log(f"  {line}")
+                log(line)
         log(f"done in {time.time() - started:.2f}s (fetch+extract {work_s:.2f}s)")
+        log("")
         return dest
     finally:
         client.close()

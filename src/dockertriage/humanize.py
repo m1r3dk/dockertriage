@@ -1,11 +1,36 @@
-"""Formatting helpers for human-facing output."""
+"""Formatting helpers for human-facing output.
 
-__all__ = ["human_bytes", "one_line", "short_digest", "build_step"]
+The layout constants live here rather than in the CLI because `dt pull`
+prints progress from the stdlib-only library modules while `dt inspect`
+renders through rich. Both read from this file, so a layer line looks the
+same whichever command produced it.
+"""
+
+__all__ = [
+    "human_bytes",
+    "one_line",
+    "short_digest",
+    "build_step",
+    "size_bar",
+    "layer_row",
+    "INDEX_W",
+    "SIZE_W",
+    "BAR_W",
+]
 
 # Noise every buildkit image repeats on most layers. Stripping it leaves the
 # part of the command that actually differs between one layer and the next.
 _PREFIXES = ("RUN /bin/sh -c ", "/bin/sh -c ", "RUN ")
 _SUFFIX = "# buildkit"
+
+# Shared column widths: index, size, and the proportional bar. The step text
+# takes whatever is left, so only these three need to agree between commands.
+INDEX_W = 3
+SIZE_W = 8
+BAR_W = 10
+
+# Eighths of a block, so a bar can show a fraction of a column.
+_BLOCKS = "▏▎▍▌▋▊▉█"
 
 
 def human_bytes(n: float) -> str:
@@ -66,3 +91,33 @@ def build_step(command: str) -> tuple[str, str]:
     if text.startswith("#"):
         return "BASE", text.lstrip("# ").strip()
     return "", text
+
+
+def size_bar(size: int, largest: int, width: int = BAR_W) -> str:
+    """A proportional bar, so the layers carrying the weight are obvious."""
+    if largest <= 0 or size <= 0:
+        return " " * width
+    eighths = max(1, round(width * 8 * size / largest))
+    full, rest = divmod(eighths, 8)
+    bar = "█" * min(full, width)
+    if rest and full < width:
+        bar += _BLOCKS[rest - 1]
+    return bar.ljust(width)
+
+
+def layer_row(index: int, size: int, largest: int, command: str, width: int = 100) -> str:
+    """One plain-text layer line, shared by `dt pull` and `dt inspect`.
+
+    Returns unstyled text; a caller with rich available can colour the verb
+    afterwards. Keeping the arithmetic here is what stops the two commands
+    drifting into different-looking output.
+    """
+    step_w = max(20, width - (INDEX_W + SIZE_W + BAR_W + 4))
+    verb, detail = build_step(command)
+    label = f"{verb} {detail}".strip() if verb else detail
+    return (
+        f"{index:>{INDEX_W}} "
+        f"{human_bytes(size):>{SIZE_W}} "
+        f"{size_bar(size, largest)} "
+        f"{one_line(label, step_w)}"
+    )

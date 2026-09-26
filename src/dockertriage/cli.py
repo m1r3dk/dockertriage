@@ -21,7 +21,16 @@ from . import batch, coverage, puller
 from . import verify as verify_core
 from .constants import BATCH_OUTPUT_DIR
 from .constants import SKIPPED_FILE_NAME as BATCH_SKIPPED
-from .humanize import build_step, human_bytes, one_line, short_digest
+from .humanize import (
+    BAR_W,
+    INDEX_W,
+    SIZE_W,
+    build_step,
+    human_bytes,
+    one_line,
+    short_digest,
+    size_bar,
+)
 from .manifest import resolve_layers
 from .reference import parse_image
 from .registry import RegistryClient
@@ -367,11 +376,18 @@ def _pull_batch(
             raise _fail(f"could not write report: {exc}") from None
 
     if not quiet:
-        table = Table(title=f"{len(images)} images")
-        table.add_column("", width=4)
-        table.add_column("image", overflow="fold")
-        table.add_column("time", justify="right")
-        table.add_column("result", overflow="fold")
+        console.print(f"\n[bold]{len(images)} images[/bold]")
+        table = Table.grid(padding=(0, 2))
+        table.add_column(width=6)
+        table.add_column(overflow="fold")
+        table.add_column(justify="right")
+        table.add_column(overflow="fold")
+        table.add_row(
+            "[dim]state[/dim]",
+            "[dim]image[/dim]",
+            "[dim]time[/dim]",
+            "[dim]result[/dim]",
+        )
         for r in results:
             detail = r.dest or f"[red]{r.error}[/red]"
             if r.verified is False:
@@ -490,12 +506,22 @@ def verify_cmd(
 
     shown = bad if failed_only else results
     if not quiet and shown:
-        table = Table(title=f"{len(results)} images ({'deep' if deep else 'quick'} check)")
-        table.add_column("", width=4)
-        table.add_column("image", overflow="fold")
-        table.add_column("status")
-        table.add_column("checks")
-        table.add_column("detail", overflow="fold")
+        console.print(
+            f"\n[bold]{len(results)} images[/bold] [dim]({'deep' if deep else 'quick'} check)[/dim]"
+        )
+        table = Table.grid(padding=(0, 2))
+        table.add_column(width=6)
+        table.add_column(overflow="fold")
+        table.add_column()
+        table.add_column(justify="right")
+        table.add_column(overflow="fold")
+        table.add_row(
+            "[dim]state[/dim]",
+            "[dim]image[/dim]",
+            "[dim]status[/dim]",
+            "[dim]checks[/dim]",
+            "[dim]detail[/dim]",
+        )
         for r in shown:
             passed = sum(1 for c in r.checks if c.passed)
             table.add_row(
@@ -596,21 +622,6 @@ _VERB_STYLE = {
     "BASE": "blue",
 }
 
-# Eighths of a block, so a bar can show a fraction of a column.
-_BLOCKS = "▏▎▍▌▋▊▉█"
-
-
-def _size_bar(size: int, largest: int, width: int = 10) -> str:
-    """A proportional bar, so the layers carrying the weight are obvious."""
-    if largest <= 0 or size <= 0:
-        return " " * width
-    eighths = max(1, round(width * 8 * size / largest))
-    full, rest = divmod(eighths, 8)
-    bar = "█" * min(full, width)
-    if rest and full < width:
-        bar += _BLOCKS[rest - 1]
-    return bar.ljust(width)
-
 
 def _print_inspect(ref, layers, config: dict, target_os: str, target_arch: str) -> None:
     """Render an image's layers without box-drawing noise.
@@ -632,11 +643,11 @@ def _print_inspect(ref, layers, config: dict, target_os: str, target_arch: str) 
     # fixed width except the last, so computing the remaining space directly
     # is simpler than persuading a table layout to do it, and it guarantees
     # the step text is truncated to fit instead of running off the edge.
+    # The widths come from humanize so `dt pull` draws its rows identically.
     width = max(60, min(stdout.width, 120))
-    index_w, size_w, bar_w = 3, 8, 10
-    step_w = width - (index_w + size_w + bar_w + 4)  # 4 = single spaces between
+    step_w = width - (INDEX_W + SIZE_W + BAR_W + 4)  # 4 = single spaces between
 
-    stdout.print(f"[dim]{'#':>{index_w}} {'size':>{size_w}} {'':<{bar_w}} step[/dim]")
+    stdout.print(f"[dim]{'#':>{INDEX_W}} {'size':>{SIZE_W}} {'':<{BAR_W}} step[/dim]")
 
     largest = max((layer.size for layer in layers), default=0)
     for i, layer in enumerate(layers, start=1):
@@ -652,9 +663,9 @@ def _print_inspect(ref, layers, config: dict, target_os: str, target_arch: str) 
         step = f"[{style}]{verb}[/{style}] {text}" if verb else text
 
         stdout.print(
-            f"[dim]{i:>{index_w}}[/dim] "
-            f"{human_bytes(layer.size):>{size_w}} "
-            f"[dim]{_size_bar(layer.size, largest, bar_w)}[/dim] "
+            f"[dim]{i:>{INDEX_W}}[/dim] "
+            f"{human_bytes(layer.size):>{SIZE_W}} "
+            f"[dim]{size_bar(layer.size, largest)}[/dim] "
             f"{step}"
         )
 

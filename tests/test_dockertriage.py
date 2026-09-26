@@ -477,17 +477,17 @@ class TestPullProgressOutput(TempRoot):
 
     def test_no_blank_lines_between_layers(self):
         # Three layers; only the download-progress line ends with \r, so the
-        # extract lines must not be separated by empty ones.
+        # layer lines must not be separated by empty ones.
         out = self._run_pull(["RUN a", "RUN b", "RUN c"])
-        extract_lines = [ln for ln in out.split("\n") if "] extract" in ln]
-        self.assertEqual(len(extract_lines), 3)
-        # No completely blank line should appear in the body.
-        stripped = out.strip("\n")
-        self.assertNotIn("\n\n", stripped, f"blank line in output:\n{out!r}")
+        layer_lines = [ln for ln in out.split("\n") if "RUN " in ln and "downloading" not in ln]
+        self.assertEqual(len(layer_lines), 3)
+        # Header and footer have breathing room; the layer body should not.
+        body = out.split(layer_lines[0], 1)[1].split(layer_lines[-1], 1)[0]
+        self.assertNotIn("\n\n", body, f"blank line in layer body:\n{out!r}")
 
     def test_buildkit_tabs_and_newlines_are_collapsed(self):
         out = self._run_pull(["RUN /bin/sh -c set -eux; \t\tapt-get update; \n\tapt-get install"])
-        body = "\n".join(ln for ln in out.split("\n") if "] extract" in ln)
+        body = "\n".join(ln for ln in out.split("\n") if "RUN " in ln and "downloading" not in ln)
         self.assertNotIn("\t", body)
         self.assertIn("apt-get update; apt-get install", body)
 
