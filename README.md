@@ -38,7 +38,42 @@ downloads, JSON reports, rate-limit checks, and a Python API are included.
 
 ## Installation
 
-### Install from GitHub
+### Install as a CLI tool with pipx (recommended)
+
+`dockertriage` is a command-line tool, so pipx is the cleanest way to get the
+`dt` and `dockertriage` commands on your PATH in an isolated environment:
+
+```bash
+pipx install "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git"
+```
+
+With the optional zstd extra:
+
+```bash
+pipx install "dockertriage[zstd] @ git+https://github.com/m1r3dk/dockertriage.git"
+```
+
+From a local checkout:
+
+```bash
+git clone https://github.com/m1r3dk/dockertriage.git
+pipx install ./dockertriage
+```
+
+Run it once without installing:
+
+```bash
+pipx run --spec "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git" dt alpine:3.19
+```
+
+Upgrade or remove:
+
+```bash
+pipx upgrade dockertriage
+pipx uninstall dockertriage
+```
+
+### Install with pip
 
 ```bash
 python -m pip install "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git"
