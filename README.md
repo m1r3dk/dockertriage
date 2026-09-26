@@ -168,13 +168,32 @@ Use `dt inspect` first to see where an image keeps its files:
 
 ```
 $ dt inspect wordpress:latest
-workdir: /var/www/html  (dt pull --app)
-content added at: /usr/local/bin/ (copy), /usr/src/wordpress/ (copy)
+
+library/wordpress
+:latest
+linux/amd64
+
+  #     size            step
+  1   28.4MB ██▌        BASE debian.sh --arch 'amd64' out/ 'trixie'
+  3  112.4MB ██████████ RUN apt-get install -y --no-install-recommends ...
+ 22    2.4KB ▏          COPY --chown=www-data wp-config-docker.php /usr/src/wordpress/
+ 23    1.7KB ▏          COPY docker-entrypoint.sh /usr/local/bin/
+
+24 layers  262.0MB compressed
+entrypoint docker-entrypoint.sh
+cmd        apache2-foreground
+workdir    /var/www/html -> dt pull --app
+
+content added at
+  /usr/local/bin/ -> dt pull -P /usr/local/bin/
+  /usr/src/wordpress/ -> dt pull -P /usr/src/wordpress/
 ```
 
-That image is a good example of why the report matters: its `WorkingDir` is
-`/var/www/html`, but the WordPress source ships in `/usr/src/wordpress`, so
-`--app` alone would hand back an empty folder and say so.
+The bar makes the heavy layers obvious, and the `content added at` list gives
+you the exact flag to copy. That image is also a good example of why the
+coverage report matters: its `WorkingDir` is `/var/www/html`, but the WordPress
+source ships in `/usr/src/wordpress`, so `--app` alone would hand back an empty
+folder and say so.
 
 ## Batch downloads
 

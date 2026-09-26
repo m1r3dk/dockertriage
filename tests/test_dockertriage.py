@@ -28,7 +28,7 @@ from dockertriage import preflight as preflight_mod
 from dockertriage import puller as puller_mod
 from dockertriage import ratelimit as ratelimit_mod
 from dockertriage import tags as tags_mod
-from dockertriage.humanize import human_bytes, one_line
+from dockertriage.humanize import build_step, human_bytes, one_line, short_digest
 
 
 class TestOneLine(unittest.TestCase):
@@ -1814,6 +1814,59 @@ class TestCoverageReport(unittest.TestCase):
         """`COPY . /` does deliver /app/main.py when the filter is /app."""
         report = coverage_mod.build_report(("app",), ["COPY . / # buildkit"], {"app": 2}, {0: 2})
         self.assertTrue(report.clean)
+
+
+class TestStepFormatting(unittest.TestCase):
+    """The layer list is read by eye, so the noise has to go.
+
+    Every Debian layer starts `RUN /bin/sh -c` and every buildkit entry ends
+    `# buildkit`; both are constant, so they carry no information and only
+    push the part that differs off the line.
+    """
+
+    def test_the_shell_wrapper_is_stripped_from_run_steps(self):
+        verb, detail = build_step("RUN /bin/sh -c apt-get update && apt-get install -y curl")
+        self.assertEqual(verb, "RUN")
+        self.assertEqual(detail, "apt-get update && apt-get install -y curl")
+
+    def test_the_buildkit_marker_is_stripped(self):
+        verb, detail = build_step("COPY docker-entrypoint.sh /usr/local/bin/ # buildkit")
+        self.assertEqual(verb, "COPY")
+        self.assertEqual(detail, "docker-entrypoint.sh /usr/local/bin/")
+
+    def test_tabs_and_newlines_collapse_to_single_spaces(self):
+        """buildkit embeds real tabs, which otherwise wreck the alignment."""
+        _, detail = build_step("RUN /bin/sh -c set -eux; \t\tapt-get update; \n\tapt-get clean")
+        self.assertNotIn("\t", detail)
+        self.assertNotIn("\n", detail)
+        self.assertIn("set -eux; apt-get update; apt-get clean", detail)
+
+    def test_base_image_layers_are_labelled(self):
+        verb, detail = build_step("# debian.sh --arch 'amd64' out/ 'bookworm'")
+        self.assertEqual(verb, "BASE")
+        self.assertTrue(detail.startswith("debian.sh"))
+
+    def test_other_verbs_are_recognised(self):
+        for text, want in (
+            ("WORKDIR /app", "WORKDIR"),
+            ("ADD file.tar.gz / # buildkit", "ADD"),
+            ("USER node", "USER"),
+        ):
+            self.assertEqual(build_step(text)[0], want, text)
+
+    def test_an_unrecognised_command_is_passed_through(self):
+        verb, detail = build_step("something unexpected")
+        self.assertEqual(verb, "")
+        self.assertEqual(detail, "something unexpected")
+
+    def test_an_empty_command_does_not_crash(self):
+        self.assertEqual(build_step(""), ("", ""))
+
+    def test_a_digest_is_shortened_but_keeps_its_algorithm(self):
+        full = "sha256:" + "4da4fc9c4800" + "0" * 52
+        self.assertEqual(short_digest(full), "sha256:4da4fc9c4800")
+        # A value with no algorithm prefix must not lose its head.
+        self.assertEqual(short_digest("abcdef123456789", 6), "abcdef")
 
 
 if __name__ == "__main__":

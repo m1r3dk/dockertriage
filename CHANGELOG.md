@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   still verifying certificates. `SSL_CERT_FILE` is honoured as before.
 
 ### Changed
+- **`dt inspect` is readable again.** The bordered table spent three characters
+  per column on box-drawing rules and wrapped a 71-character digest reference
+  across two lines. The layer list is now borderless, aligned by spacing, with:
+  a proportional bar so the layers carrying the weight are obvious at a glance;
+  `RUN /bin/sh -c` and `# buildkit` stripped, since every layer repeats them;
+  the build verb colour-coded, so `COPY` and `ADD` stand out from a wall of
+  `RUN`; long digests shortened; and each `content added at` path printed with
+  the exact `dt pull -P` flag to copy.
+
 - **`dt layers` is now `dt inspect --digests`.** The two commands did the same
   registry lookup and only differed in output, so they are merged into one.
   `dt inspect` still prints the table by default; add `--digests` (`-D`) for the

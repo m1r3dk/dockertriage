@@ -21,7 +21,7 @@ from . import batch, coverage, puller
 from . import verify as verify_core
 from .constants import BATCH_OUTPUT_DIR
 from .constants import SKIPPED_FILE_NAME as BATCH_SKIPPED
-from .humanize import human_bytes, one_line
+from .humanize import build_step, human_bytes, one_line, short_digest
 from .manifest import resolve_layers
 from .reference import parse_image
 from .registry import RegistryClient
@@ -583,36 +583,116 @@ def inspect(
             print(layer.digest)
         return
 
-    table = Table(title=f"{ref.pretty}  ({target_os}/{target_arch})")
-    table.add_column("#", justify="right", style="dim")
-    table.add_column("size", justify="right")
-    table.add_column("command")
-    # buildkit puts tabs and newlines in `created_by`; collapse them or rich
-    # reflows the table into an unreadable mess.
-    for i, layer in enumerate(found, start=1):
-        table.add_row(str(i), human_bytes(layer.size), one_line(layer.command or layer.digest, 68))
-    stdout.print(table)
+    _print_inspect(ref, found, config, target_os, target_arch)
+
+
+# A colour per build verb. Layers that add content are the ones worth finding
+# in a wall of RUN steps, so COPY and ADD get the bright colours.
+_VERB_STYLE = {
+    "COPY": "bright_cyan",
+    "ADD": "bright_cyan",
+    "RUN": "yellow",
+    "WORKDIR": "magenta",
+    "BASE": "blue",
+}
+
+# Eighths of a block, so a bar can show a fraction of a column.
+_BLOCKS = "▏▎▍▌▋▊▉█"
+
+
+def _size_bar(size: int, largest: int, width: int = 10) -> str:
+    """A proportional bar, so the layers carrying the weight are obvious."""
+    if largest <= 0 or size <= 0:
+        return " " * width
+    eighths = max(1, round(width * 8 * size / largest))
+    full, rest = divmod(eighths, 8)
+    bar = "█" * min(full, width)
+    if rest and full < width:
+        bar += _BLOCKS[rest - 1]
+    return bar.ljust(width)
+
+
+def _print_inspect(ref, layers, config: dict, target_os: str, target_arch: str) -> None:
+    """Render an image's layers without box-drawing noise.
+
+    A bordered table spends three characters per column on rules and wraps a
+    long digest across lines. Alignment alone separates the columns just as
+    well, which leaves the width for content.
+    """
+    # Repo and tag on their own lines: a digest reference is 71 characters, so
+    # keeping it on the name's line guarantees an ugly wrap.
+    stdout.print(f"\n[bold]{ref.repo}[/bold]")
+    if ref.is_digest:
+        stdout.print(f"[dim]@[/dim][cyan]{short_digest(ref.ref, 16)}[/cyan] [dim]digest[/dim]")
+    else:
+        stdout.print(f"[dim]:[/dim][cyan]{ref.ref}[/cyan]")
+    stdout.print(f"[dim]{target_os}/{target_arch}[/dim]\n")
+
+    # Laid out by hand rather than with a Table. The columns here are all
+    # fixed width except the last, so computing the remaining space directly
+    # is simpler than persuading a table layout to do it, and it guarantees
+    # the step text is truncated to fit instead of running off the edge.
+    width = max(60, min(stdout.width, 120))
+    index_w, size_w, bar_w = 3, 8, 10
+    step_w = width - (index_w + size_w + bar_w + 4)  # 4 = single spaces between
+
+    stdout.print(f"[dim]{'#':>{index_w}} {'size':>{size_w}} {'':<{bar_w}} step[/dim]")
+
+    largest = max((layer.size for layer in layers), default=0)
+    for i, layer in enumerate(layers, start=1):
+        verb, detail = build_step(layer.command or "")
+        if not (layer.command or "").strip():
+            verb, detail = "", short_digest(layer.digest)
+
+        # Truncate before adding markup, or the tags themselves get counted
+        # as visible characters and the line comes out short.
+        room = step_w - (len(verb) + 1 if verb else 0)
+        text = one_line(detail, max(10, room))
+        style = _VERB_STYLE.get(verb, "white")
+        step = f"[{style}]{verb}[/{style}] {text}" if verb else text
+
+        stdout.print(
+            f"[dim]{i:>{index_w}}[/dim] "
+            f"{human_bytes(layer.size):>{size_w}} "
+            f"[dim]{_size_bar(layer.size, largest, bar_w)}[/dim] "
+            f"{step}"
+        )
 
     image_cfg = config.get("config") or {}
-    total = human_bytes(sum(layer.size for layer in found))
-    stdout.print(
-        f"[bold]{len(found)}[/bold] layers, [bold]{total}[/bold] compressed"
-        f"   entrypoint={image_cfg.get('Entrypoint')}  cmd={image_cfg.get('Cmd')}"
-    )
+    total = human_bytes(sum(layer.size for layer in layers))
+    plural = "layer" if len(layers) == 1 else "layers"
+    stdout.print(f"\n[bold]{len(layers)}[/bold] {plural}  [bold]{total}[/bold] compressed")
+
+    # Runtime facts, one per line, so nothing has to wrap mid-value.
+    for label, value in (
+        ("entrypoint", image_cfg.get("Entrypoint")),
+        ("cmd", image_cfg.get("Cmd")),
+        ("user", image_cfg.get("User")),
+    ):
+        if value:
+            shown = " ".join(value) if isinstance(value, list) else str(value)
+            stdout.print(f"[dim]{label:<11}[/dim]{shown}")
 
     # Where the application actually lives, and every path the build copied
     # content into. This is what makes `--path`/`--app` an informed choice
     # rather than a guess.
     workdir = coverage.working_dir(config)
     if workdir:
-        stdout.print(f"workdir: [cyan]{workdir}[/cyan]  [dim](dt pull --app)[/dim]")
+        stdout.print(
+            f"[dim]{'workdir':<11}[/dim][cyan]{workdir}[/cyan] [dim]-> dt pull --app[/dim]"
+        )
     else:
-        stdout.print("workdir: [dim]not set by this image[/dim]")
+        stdout.print(f"[dim]{'workdir':<11}not set by this image[/dim]")
 
-    destinations = coverage.copy_destinations([layer.command for layer in found])
+    destinations = coverage.copy_destinations([layer.command for layer in layers])
     if destinations:
-        shown = ", ".join(f"[cyan]{d.path}[/cyan] ({d.verb.lower()})" for d in destinations)
-        stdout.print(f"content added at: {shown}")
+        # De-duplicated: an image often copies into the same directory many
+        # times, and repeating it says nothing extra.
+        seen = list(dict.fromkeys(d.path for d in destinations))
+        stdout.print("\n[dim]content added at[/dim]")
+        for dest in seen:
+            stdout.print(f"  [bright_cyan]{dest}[/bright_cyan] [dim]-> dt pull -P {dest}[/dim]")
+    stdout.print("")
 
 
 def main(args: list[str] | None = None) -> int:
