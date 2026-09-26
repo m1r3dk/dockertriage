@@ -673,9 +673,8 @@ def _print_inspect(ref, layers, config: dict, target_os: str, target_arch: str) 
             shown = " ".join(value) if isinstance(value, list) else str(value)
             stdout.print(f"[dim]{label:<11}[/dim]{shown}")
 
-    # Where the application actually lives, and every path the build copied
-    # content into. This is what makes `--path`/`--app` an informed choice
-    # rather than a guess.
+    # Where the application lives, which is what makes `--app` an informed
+    # choice rather than a guess.
     workdir = coverage.working_dir(config)
     if workdir:
         stdout.print(
@@ -683,15 +682,6 @@ def _print_inspect(ref, layers, config: dict, target_os: str, target_arch: str) 
         )
     else:
         stdout.print(f"[dim]{'workdir':<11}not set by this image[/dim]")
-
-    destinations = coverage.copy_destinations([layer.command for layer in layers])
-    if destinations:
-        # De-duplicated: an image often copies into the same directory many
-        # times, and repeating it says nothing extra.
-        seen = list(dict.fromkeys(d.path for d in destinations))
-        stdout.print("\n[dim]content added at[/dim]")
-        for dest in seen:
-            stdout.print(f"  [bright_cyan]{dest}[/bright_cyan] [dim]-> dt pull -P {dest}[/dim]")
     stdout.print("")
 
 

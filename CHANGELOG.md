@@ -46,8 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a proportional bar so the layers carrying the weight are obvious at a glance;
   `RUN /bin/sh -c` and `# buildkit` stripped, since every layer repeats them;
   the build verb colour-coded, so `COPY` and `ADD` stand out from a wall of
-  `RUN`; long digests shortened; and each `content added at` path printed with
-  the exact `dt pull -P` flag to copy.
+  `RUN`; long digests shortened; and the image's `WorkingDir` shown, since that
+  is what `--app` filters on.
 
 - **`dt layers` is now `dt inspect --digests`.** The two commands did the same
   registry lookup and only differed in output, so they are merged into one.

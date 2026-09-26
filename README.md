@@ -183,14 +183,10 @@ linux/amd64
 entrypoint docker-entrypoint.sh
 cmd        apache2-foreground
 workdir    /var/www/html -> dt pull --app
-
-content added at
-  /usr/local/bin/ -> dt pull -P /usr/local/bin/
-  /usr/src/wordpress/ -> dt pull -P /usr/src/wordpress/
 ```
 
-The bar makes the heavy layers obvious, and the `content added at` list gives
-you the exact flag to copy. That image is also a good example of why the
+The bar makes the heavy layers obvious, and the `COPY` lines show where the
+build put its own content. That image is also a good example of why the
 coverage report matters: its `WorkingDir` is `/var/www/html`, but the WordPress
 source ships in `/usr/src/wordpress`, so `--app` alone would hand back an empty
 folder and say so.
