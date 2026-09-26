@@ -34,7 +34,7 @@ dependencies = ["typer>=0.12"]
 
 [dependency-groups]
 # `uv sync` installs these; `pip install dockertriage` does not.
-dev = ["mypy>=1.11,<1.19", "pytest>=8", "ruff>=0.6"]
+dev = ["mypy>=1.11,<2.4", "pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 dt = "dockertriage.cli:main"
