@@ -435,7 +435,7 @@ class TestSingleEntryPoint(unittest.TestCase):
 
 
 class TestEveryCommandIsCallable(unittest.TestCase):
-    """`dt layers` shipped raising NameError on an undefined local.
+    """A command once shipped raising NameError on an undefined local.
 
     Nothing executed the command bodies, so a typo survived review. Compiling
     each callback against its own signature catches that class of bug without

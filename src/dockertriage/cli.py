@@ -5,7 +5,7 @@ core modules, which stay importable without ever touching this file.
 
     dt alpine:3.19            # pull is implied
     dt inspect python:3.12-slim
-    dt layers alpine:3.19
+    dt inspect --digests alpine:3.19
 """
 
 import json

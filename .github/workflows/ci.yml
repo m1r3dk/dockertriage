@@ -40,7 +40,7 @@ jobs:
           dt --version
           dt --help
           dt inspect alpine:3.19
-          dt layers alpine:3.19
+          dt inspect --digests alpine:3.19
 
   cross-platform:
     # Extraction is all path handling, and paths are where macOS and Windows
