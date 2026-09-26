@@ -447,7 +447,10 @@ class TestEveryCommandIsCallable(unittest.TestCase):
         import symtable
 
         path = cli_mod.__file__
-        source = open(path).read()
+        # encoding is explicit: Python source is UTF-8, but open() defaults to
+        # the locale encoding, which is cp1252 on Windows and cannot decode the
+        # block characters the layer-size bar is drawn with.
+        source = open(path, encoding="utf-8").read()
         top = symtable.symtable(source, path, "exec")
         # `builtins` explicitly, not `__builtins__`: the latter is a module
         # when this file runs as __main__ but a dict when pytest imports it,
@@ -522,7 +525,8 @@ class TestCoreStaysIndependent(unittest.TestCase):
             # cli.py is the one module allowed to import typer.
             if path.name == "cli.py":
                 continue
-            tree = ast.parse(path.read_text())
+            # Python source is UTF-8 regardless of the platform's locale.
+            tree = ast.parse(path.read_text(encoding="utf-8"))
             modules = set()
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):

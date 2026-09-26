@@ -146,7 +146,7 @@ jobs:
               if path.name == "cli.py":
                   continue
               mods = set()
-              for n in ast.walk(ast.parse(path.read_text())):
+              for n in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                   if isinstance(n, ast.Import):
                       mods |= {a.name.split(".")[0] for a in n.names}
                   elif isinstance(n, ast.ImportFrom) and n.module and n.level == 0:
