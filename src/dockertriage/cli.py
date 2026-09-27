@@ -20,7 +20,6 @@ from rich.table import Table
 from . import batch, coverage, puller
 from . import verify as verify_core
 from .constants import BATCH_OUTPUT_DIR
-from .constants import SKIPPED_FILE_NAME as BATCH_SKIPPED
 from .humanize import (
     BAR_W,
     INDEX_W,
@@ -375,51 +374,11 @@ def _pull_batch(
         except OSError as exc:
             raise _fail(f"could not write report: {exc}") from None
 
-    if not quiet:
-        console.print(f"\n[bold]{len(images)} images[/bold]")
-        table = Table.grid(padding=(0, 2))
-        table.add_column(width=6)
-        table.add_column(overflow="fold")
-        table.add_column(justify="right")
-        table.add_column(overflow="fold")
-        table.add_row(
-            "[dim]state[/dim]",
-            "[dim]image[/dim]",
-            "[dim]time[/dim]",
-            "[dim]result[/dim]",
-        )
-        for r in results:
-            detail = r.dest or f"[red]{r.error}[/red]"
-            if r.verified is False:
-                detail = f"[red]{r.verify_status}: {'; '.join(r.verify_problems)}[/red]"
-            if r.skipped:
-                # Not a failure to download; it was never downloadable.
-                mark = "[yellow]skip[/yellow]"
-                detail = f"[yellow]{r.error}[/yellow]"
-            else:
-                mark = "[green]ok[/green]" if r.ok else "[red]FAIL[/red]"
-            table.add_row(mark, r.image, f"{r.seconds:.1f}s", detail)
-        console.print(table)
-        if skipped:
-            console.print(
-                f"[yellow]{len(skipped)}/{len(images)} images were not downloadable "
-                f"(private, deleted, or taken down)[/yellow]"
-            )
-            console.print(f"[dim]listed in {output / BATCH_SKIPPED}[/dim]")
-        if check:
-            # The tally is against the images that were actually downloadable,
-            # since counting a taken-down repo as "unverified" would blame the
-            # download for something it was never given a chance to do.
-            verified = sum(1 for r in results if r.verified)
-            attempted = len(images) - len(skipped)
-            colour = "green" if verified == attempted else "red"
-            console.print(
-                f"[{colour}]{verified}/{attempted} downloadable images verified on disk[/{colour}]"
-            )
-            method = next((r.verify_summary for r in results if r.verify_summary), None)
-            if method:
-                console.print(f"[dim]each image: {method}[/dim]")
-
+    # pull_many already streams one line per image and prints the run summary
+    # (ok/failed tally, verified-on-disk count, skip-list location) to stderr
+    # as it goes. Re-printing a full table and the same tallies here is what
+    # made a 100-image run unreadable, so the CLI adds nothing to stderr and
+    # only emits the machine-facing destination paths on stdout.
     for r in results:
         if r.ok and r.dest:
             print(r.dest)

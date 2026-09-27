@@ -1279,6 +1279,63 @@ class TestBatchVerifiesWhatItPulled(unittest.TestCase):
         self.assertTrue(d["verify_checks"])
         self.assertIn("check", d["verify_checks"][0])
 
+    def test_result_carries_download_and_disk_sizes(self):
+        """A batch must be able to report bandwidth and footprint per image."""
+
+        def fake(image, out_dir, **kw):
+            dest = os.path.join(out_dir, image)
+            os.makedirs(dest, exist_ok=True)
+            with open(os.path.join(dest, "file"), "w") as fh:
+                fh.write("x" * 42)
+            meta = {
+                "image": image,
+                "layers": [{"digest": "sha256:a", "size": 1}],
+                "complete": True,
+                "compressed_bytes": 1234,
+                "rootfs": dp.scan_tree(dest).as_dict(),
+            }
+            with open(os.path.join(dest, ".image.json"), "w") as fh:
+                json.dump(meta, fh)
+            return dest
+
+        puller_mod.pull = fake
+        results = batch_mod.pull_many(
+            ["a"], self.root, quiet=True, check_budget=False, check_access=False
+        )
+        self.assertEqual(results[0].compressed_bytes, 1234)
+        self.assertEqual(results[0].disk_bytes, 42)
+        d = results[0].as_dict()
+        self.assertEqual(d["compressed_bytes"], 1234)
+        self.assertEqual(d["disk_bytes"], 42)
+
+    def test_summary_reports_total_download_and_disk_and_path(self):
+        """The end of a run must state totals and where the files went."""
+
+        def fake(image, out_dir, **kw):
+            dest = os.path.join(out_dir, image)
+            os.makedirs(dest, exist_ok=True)
+            with open(os.path.join(dest, "file"), "w") as fh:
+                fh.write("x" * 100)
+            meta = {
+                "image": image,
+                "layers": [{"digest": "sha256:a", "size": 1}],
+                "complete": True,
+                "compressed_bytes": 2000,
+                "rootfs": dp.scan_tree(dest).as_dict(),
+            }
+            with open(os.path.join(dest, ".image.json"), "w") as fh:
+                json.dump(meta, fh)
+            return dest
+
+        puller_mod.pull = fake
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            batch_mod.pull_many(["a", "b"], self.root, check_budget=False, check_access=False)
+        text = err.getvalue()
+        self.assertIn("downloaded", text)
+        self.assertIn("on disk", text)
+        self.assertIn(os.path.abspath(self.root), text)
+
     def test_deep_verification_catches_post_pull_damage(self):
         """Quick trusts the marker; deep re-counts, so it sees partial loss.
 

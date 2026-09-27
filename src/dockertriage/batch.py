@@ -18,6 +18,7 @@ from . import preflight, puller, ratelimit
 from . import verify as verify_mod
 from .constants import SKIPPED_FILE_NAME
 from .errors import RateLimited
+from .humanize import human_bytes, size_bar
 from .ratelimit import RateBudget, registry_credentials
 
 __all__ = ["BatchResult", "pull_many", "read_image_list"]
@@ -64,6 +65,11 @@ class BatchResult:
     dest: str | None = None
     error: str | None = None
     seconds: float = 0.0
+    # Sizes surfaced so a batch can report bandwidth and disk use without a
+    # second walk: `compressed_bytes` is what came off the network, `disk_bytes`
+    # is what the merged rootfs occupies. Both come from the pull's own record.
+    compressed_bytes: int = 0
+    disk_bytes: int = 0
     # Filled in by the post-pull check: None when verification was skipped,
     # otherwise the reason the folder on disk is or is not trustworthy.
     verified: bool | None = None
@@ -95,6 +101,10 @@ class BatchResult:
         d: dict[str, Any] = {"image": self.image, "ok": self.ok, "seconds": round(self.seconds, 2)}
         if self.dest:
             d["dest"] = self.dest
+        if self.compressed_bytes:
+            d["compressed_bytes"] = self.compressed_bytes
+        if self.disk_bytes:
+            d["disk_bytes"] = self.disk_bytes
         if self.error:
             d["error"] = self.error
         if self.access_status:
@@ -155,10 +165,17 @@ def pull_many(
     width = len(str(len(items)))
     counter = [0]
     lock = threading.Lock()
+    # A live bar is only legible when one image is in flight; with several,
+    # interleaved carriage returns from different threads fight over the line.
+    show_bar = concurrency <= 1 and not quiet
+    bar_open = [False]
 
     def log(msg: str) -> None:
         if not quiet:
             print(msg, file=sys.stderr, flush=True)
+
+    def where() -> str:
+        return os.path.abspath(out_dir)
 
     # Check the budget before spending it. Finding out mid-run that the list
     # was always too big is the failure mode this avoids.
@@ -241,6 +258,32 @@ def pull_many(
                 "(use --deep to re-count every file)"
             )
 
+    # Say where the files are going before the first byte lands, so it is on
+    # screen no matter how long the run is or where it stops.
+    log(f"extracting into {where()}")
+
+    def draw_bar(image: str, seen: int, total: int) -> None:
+        """Redraw the in-place progress line for the image being pulled."""
+        if not show_bar:
+            return
+        pct = 100.0 * seen / total if total else 0.0
+        bar = size_bar(seen, total or 1)
+        head = f"[{counter[0] + 1:>{width}}/{len(items)}]"
+        tail = f"{human_bytes(seen)}/{human_bytes(total)} ({pct:.0f}%)"
+        # Truncate the reference so the line cannot wrap and strand the \r.
+        name = image if len(image) <= 34 else image[:33] + "…"
+        line = f"{head} {name:<34} {bar} {tail:<22}"
+        with lock:
+            print(f"\r{line}", end="", file=sys.stderr, flush=True)
+            bar_open[0] = True
+
+    def clear_bar() -> None:
+        """Erase the progress line so the result line replaces it cleanly."""
+        with lock:
+            if bar_open[0]:
+                print("\r" + " " * 100 + "\r", end="", file=sys.stderr, flush=True)
+                bar_open[0] = False
+
     def run_one(image: str) -> BatchResult:
         if rate_limited.is_set():
             return BatchResult(image, error="skipped: registry rate limit reached")
@@ -253,11 +296,26 @@ def pull_many(
                 os_name=os_name,
                 arch=arch,
                 keep_tar=keep_tar,
-                quiet=quiet or concurrency > 1,
+                # A batch owns its own output: one compact line per image
+                # below, plus a single live bar for the image in flight. The
+                # puller's full single-image view (header, layer table) repeated
+                # per image is unreadable in a list of hundreds, so silence it.
+                quiet=True,
                 verify=verify,
                 strict_tag=strict_tag,
+                on_progress=(lambda seen, total: draw_bar(image, seen, total))
+                if show_bar
+                else None,
             )
+            clear_bar()
             res = BatchResult(image, dest=dest, seconds=time.time() - t0)
+            # Sizes come from the record the pull just wrote, so reporting them
+            # costs no extra walk: compressed is bandwidth, disk is footprint.
+            record = verify_mod.read_record(dest) or {}
+            res.compressed_bytes = int(record.get("compressed_bytes") or 0)
+            rootfs = record.get("rootfs")
+            if isinstance(rootfs, dict):
+                res.disk_bytes = int(rootfs.get("bytes") or 0)
             if verify_pulls:
                 # Confirm the folder exists and is complete before calling
                 # this image done. Quick by default: the pull just counted
@@ -275,20 +333,29 @@ def pull_many(
                     res.verify_status = "missing"
                     res.verify_problems = [str(exc)]
         except KeyboardInterrupt:
+            clear_bar()
             raise
         except RateLimited as exc:
             # Every remaining image will hit the same wall, and each attempt
             # digs the hole deeper, so stop trying.
+            clear_bar()
             rate_limited.set()
             res = BatchResult(image, error=str(exc), seconds=time.time() - t0)
         except BaseException as exc:  # noqa: BLE001 - a batch must survive anything
+            clear_bar()
             res = BatchResult(image, error=f"{type(exc).__name__}: {exc}", seconds=time.time() - t0)
         with lock:
             counter[0] += 1
             mark = "ok  " if res.ok else "FAIL"
             if res.ok:
-                # Name the evidence, not just the verdict.
-                detail = f"  {res.verify_summary}" if res.verify_summary else ""
+                # Name the sizes and the evidence, not just the verdict.
+                size = ""
+                if res.compressed_bytes or res.disk_bytes:
+                    size = (
+                        f"  {human_bytes(res.compressed_bytes)} dl"
+                        f" -> {human_bytes(res.disk_bytes)} on disk"
+                    )
+                detail = size + (f"  {res.verify_summary}" if res.verify_summary else "")
             else:
                 detail = "  " + (res.error or "; ".join(res.verify_problems) or "unverified")
             log(f"[{counter[0]:>{width}}/{len(items)}] {mark} {image} ({res.seconds:.1f}s){detail}")
@@ -320,10 +387,16 @@ def pull_many(
 
     failed = [r for r in results if not r.ok]
     verified = sum(1 for r in results if r.verified)
+    total_dl = sum(r.compressed_bytes for r in results)
+    total_disk = sum(r.disk_bytes for r in results)
     log(
         f"\n{len(results) - len(failed)}/{len(items)} ok, {len(failed)} failed "
         f"in {time.time() - started:.1f}s"
     )
+    if total_dl or total_disk:
+        # The two numbers a batch is actually asked about afterwards: how much
+        # bandwidth it spent, and how much disk the extracted images now hold.
+        log(f"{human_bytes(total_dl)} downloaded, {human_bytes(total_disk)} on disk")
     if verify_pulls:
         # The line that answers "did they all actually download?" without
         # anyone having to scroll back through the run.
@@ -335,6 +408,8 @@ def pull_many(
         unattempted = len(items) - len(results)
         if unattempted:
             log(f"  {unattempted} never attempted")
+    # Repeat the destination at the end, where the eye lands when the run stops.
+    log(f"files are in {where()}")
     for r in failed:
         log(f"  FAIL {r.image}: {r.error or '; '.join(r.verify_problems)}")
     if rate_limited.is_set():

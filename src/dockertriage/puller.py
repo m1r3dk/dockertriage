@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 from . import coverage
@@ -39,6 +39,7 @@ def pull(
     strict_tag: bool = False,
     paths: Sequence[str] | None = None,
     use_workdir: bool = False,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> str:
     started = time.time()
 
@@ -114,6 +115,13 @@ def pull(
         progress_open = [False]
 
         def on_chunk(n: int) -> None:
+            # The batch renders its own per-image bar from this callback, so it
+            # fires whether or not this puller is drawing its own progress line.
+            if on_progress is not None and total_bytes:
+                with progress_lock:
+                    seen_bytes[0] += n
+                    on_progress(seen_bytes[0], total_bytes)
+                return
             if quiet or not total_bytes:
                 return
             with progress_lock:
