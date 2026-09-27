@@ -51,6 +51,9 @@ not-downloaded.txt
 analysis/
 *secrets*
 *verified_keys*
+# ...but the secret-scanning feature itself is source code, not findings.
+!src/dockertriage/secrets.py
+!tests/test_secrets.py
 
 # Scratch inputs and dumps. The image lists used during development name
 # real third-party repositories that were being scanned; publishing them
@@ -62,3 +65,8 @@ mentions.txt
 # Reports produced by --report / dt verify -r.
 report.json
 verify.json
+
+# Secret extraction output. This folder is a concentrated dump of live
+# credentials in plaintext: committing it would publish every key the
+# scanned images leaked. Never version it.
+extracted_secrets/

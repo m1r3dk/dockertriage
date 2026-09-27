@@ -17,7 +17,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import batch, coverage, puller
+from . import batch, coverage, puller, secretreport, secrets
 from . import verify as verify_core
 from .constants import BATCH_OUTPUT_DIR
 from .humanize import (
@@ -519,6 +519,176 @@ def verify_cmd(
         raise typer.Exit(1)
 
 
+@app.command(name="secrets")
+def secrets_cmd(
+    target: Path | None = typer.Argument(
+        None,
+        help="Extracted image, a folder of them, or any directory "
+        "[dim](default: ./output, then .)[/dim].",
+        show_default=False,
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Where to write the findings "
+        f"[dim](default: ./{secretreport.DEFAULT_OUTPUT_DIR})[/dim].",
+    ),
+    engine: list[str] = typer.Option(
+        [],
+        "--engine",
+        "-e",
+        help="Limit to these engines. Repeatable, e.g. [cyan]-e betterleaks -e trufflehog[/cyan].",
+    ),
+    verify: bool = typer.Option(
+        False,
+        "--verify-live/--no-verify-live",
+        "-y/-n",
+        help="Let TruffleHog [dim]call third-party APIs[/dim] to prove a credential still works.",
+    ),
+    timeout: float = typer.Option(
+        600.0,
+        "--timeout",
+        "-t",
+        help="Seconds any one engine may run against one image.",
+    ),
+    fail_on_findings: bool = typer.Option(
+        False,
+        "--fail-on-findings",
+        "-f",
+        help="Exit non-zero when anything is found, for CI gates.",
+    ),
+    show: int = typer.Option(
+        10,
+        "--show",
+        "-s",
+        min=0,
+        max=200,
+        help="How many findings to print to the terminal.",
+    ),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Only print the output path."),
+    list_engines: bool = typer.Option(
+        False,
+        "--list-engines",
+        "-l",
+        help="Show which scanners are installed, then exit.",
+    ),
+) -> None:
+    """Collect every credential in an extracted image into one folder.
+
+    Reads all three places a container leaks from: the image config's
+    baked-in [cyan]ENV[/cyan], credential files like [cyan].env[/cyan] and
+    [cyan]~/.aws/credentials[/cyan], and application source.
+
+    Values are written [bold]in the clear[/bold] so they can be rotated
+    immediately, so treat the output folder as the credentials themselves.
+    """
+    global _exit_code
+
+    if list_engines:
+        present, missing = secrets.available_engines()
+        for item in present:
+            stdout.print(f"[green]installed[/green]  {item.name:<12} {item.measured_recall}")
+        for item in missing:
+            stdout.print(f"[red]missing[/red]    {item.name:<12} install with: {item.install_hint}")
+        return
+
+    # `dt secrets` with no argument means the obvious thing: a batch just
+    # wrote ./output, so scan that; otherwise scan where the user is.
+    if target is None:
+        target = Path(BATCH_OUTPUT_DIR) if os.path.isdir(BATCH_OUTPUT_DIR) else Path(".")
+    if not target.exists():
+        raise _fail(f"no such path: {target}")
+
+    selected = None
+    if engine:
+        known = {e.name: e for e in secrets.ENGINES}
+        unknown = [name for name in engine if name not in known]
+        if unknown:
+            raise _fail(
+                f"unknown engine(s): {', '.join(unknown)}. Available: {', '.join(known)}",
+                2,
+            )
+        selected = [known[name] for name in engine]
+
+    out_dir = output if output is not None else Path(secretreport.DEFAULT_OUTPUT_DIR)
+    # Never write the report inside the tree being scanned: the next run
+    # would then find its own output and report it as a fresh leak.
+    if os.path.abspath(str(out_dir)).startswith(os.path.abspath(str(target)) + os.sep):
+        raise _fail("--output must not be inside the folder being scanned", 2)
+
+    targets = secrets.discover_targets(str(target))
+    if not quiet:
+        present, missing = secrets.available_engines()
+        if selected is None and not present:
+            console.print(
+                "[yellow]no scanning engine installed:[/yellow] only credential files and "
+                "named variables will be found"
+            )
+            for item in missing:
+                console.print(f"[dim]  install {item.name}: {item.install_hint}[/dim]")
+        console.print(f"scanning {len(targets)} target(s) from {os.path.abspath(str(target))}")
+
+    scan = secrets.SecretScan()
+    try:
+        for index, root in enumerate(targets, start=1):
+            if not quiet and len(targets) > 1:
+                console.print(
+                    f"[dim][{index}/{len(targets)}] {os.path.basename(root)}[/dim]",
+                )
+            result = secrets.scan_tree_for_secrets(
+                root, engines=selected, timeout=timeout, verify=verify
+            )
+            scan.results.append(result)
+    except KeyboardInterrupt:
+        _exit_code = 130
+        console.print("[yellow]interrupted[/yellow]")
+        raise typer.Exit(130) from None
+
+    try:
+        written = secretreport.write_report(scan, str(out_dir))
+    except OSError as exc:
+        raise _fail(f"could not write the report: {exc}") from None
+
+    if not quiet:
+        _print_secret_findings(scan, show)
+        for line in secretreport.summary_lines(scan, written):
+            console.print(line)
+
+    # The path on stdout, so it can be piped or captured.
+    print(written)
+
+    if fail_on_findings and scan.findings:
+        _exit_code = 1
+        raise typer.Exit(1)
+
+
+def _print_secret_findings(scan: secrets.SecretScan, show: int) -> None:
+    """Show the worst findings immediately, so action does not wait on a file."""
+    if not scan.findings or show <= 0:
+        return
+    top = secretreport.top_findings(scan, show)
+    console.print("")
+    width = max(60, min(console.width, 120))
+    for finding in top:
+        colour = {
+            "critical": "red",
+            "high": "yellow",
+            "medium": "cyan",
+        }.get(finding.severity, "white")
+        where = finding.path + (f":{finding.line}" if finding.line else "")
+        # The secret is the point, so it gets the room; the location is
+        # truncated instead when the line would wrap.
+        secret = one_line(finding.secret, max(20, width - 40))
+        console.print(f"[{colour}]{finding.severity:<8}[/{colour}] {secret}")
+        mark = " [green](verified live)[/green]" if finding.verified else ""
+        console.print(f"[dim]         {one_line(where, width - 10)}  {finding.rule}[/dim]{mark}")
+    remaining = len(scan.findings) - len(top)
+    if remaining > 0:
+        console.print(f"[dim]... and {remaining} more in the report[/dim]")
+    console.print("")
+
+
 @app.command()
 def inspect(
     image: str = typer.Argument(..., help="Image reference to inspect.", show_default=False),
@@ -669,7 +839,7 @@ def main(args: list[str] | None = None) -> int:
     # No arguments is a request for help, not an error worth exit 1.
     if not argv:
         argv = ["--help"]
-    commands = {"pull", "inspect", "verify"}
+    commands = {"pull", "inspect", "verify", "secrets"}
     # App-level flags must keep reaching the app, not get shoved into `pull`.
     app_level = {"--help", "-h", "--version", "-V"}
     if argv and argv[0] not in commands and argv[0] not in app_level:

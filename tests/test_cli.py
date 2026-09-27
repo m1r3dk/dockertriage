@@ -133,7 +133,7 @@ class TestTyperCLI(unittest.TestCase):
 
     def test_commands_are_registered(self):
         result = self.runner.invoke(cli_mod.app, ["--help"])
-        for command in ("pull", "inspect", "verify"):
+        for command in ("pull", "inspect", "verify", "secrets"):
             self.assertIn(command, result.output)
 
 
@@ -604,7 +604,7 @@ class TestFlagContract(unittest.TestCase):
 
     def test_every_long_flag_has_a_single_letter_short_form(self):
         missing = []
-        for command in ("pull", "inspect", "verify"):
+        for command in ("pull", "inspect", "verify", "secrets"):
             for param in self._params(command):
                 every = getattr(param, "opts", [])
                 opts = [o for o in every if o.startswith("--")]
@@ -614,7 +614,7 @@ class TestFlagContract(unittest.TestCase):
         self.assertEqual(missing, [], f"long flags without a short form: {missing}")
 
     def test_short_forms_are_unique_within_a_command(self):
-        for command in ("pull", "inspect", "verify"):
+        for command in ("pull", "inspect", "verify", "secrets"):
             seen = {}
             for param in self._params(command):
                 for opt in getattr(param, "opts", []):
@@ -741,6 +741,36 @@ class TestBatchRouting(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli_mod.main(["--version"]), 0)
             self.assertEqual(cli_mod.main(["-h"]), 0)
+
+
+class TestSecretsRouting(unittest.TestCase):
+    """`dt secrets` must reach the command, not be read as an image name."""
+
+    def test_secrets_is_a_real_subcommand(self):
+        root = tempfile.mkdtemp(prefix="dt-cli-secrets-")
+        self.addCleanup(shutil.rmtree, root, True)
+        out = os.path.join(root, "report")
+        target = os.path.join(root, "tree")
+        os.makedirs(target, exist_ok=True)
+        with open(os.path.join(target, "app.env"), "w") as fh:
+            fh.write("DB_PASSWORD=hunter2\n")
+        with quiet():
+            code = cli_mod.main(["secrets", target, "-o", out, "-q"])
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.exists(os.path.join(out, "findings.json")))
+
+    def test_the_report_may_not_be_written_inside_the_scanned_tree(self):
+        """Otherwise the next run finds its own output and reports it again."""
+        root = tempfile.mkdtemp(prefix="dt-cli-secrets2-")
+        self.addCleanup(shutil.rmtree, root, True)
+        with quiet():
+            code = cli_mod.main(["secrets", root, "-o", os.path.join(root, "inside")])
+        self.assertEqual(code, 2)
+
+    def test_an_unknown_engine_is_a_usage_error(self):
+        with quiet():
+            code = cli_mod.main(["secrets", ".", "-e", "nope"])
+        self.assertEqual(code, 2)
 
 
 class TestHelpfulEmptyInvocations(unittest.TestCase):
