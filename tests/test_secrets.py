@@ -289,6 +289,21 @@ class TestScanningATree(unittest.TestCase):
         result = self._scan()
         self.assertTrue(any("No external engine ran" in n for n in result.coverage.notes))
 
+    def test_paths_are_reported_with_forward_slashes(self):
+        """A report written on Windows must name the same file as on Linux.
+
+        Native separators would also stop an engine's POSIX-style path from
+        merging with ours, so the same leak would appear twice.
+        """
+        self._write("root/.ssh/id_rsa", "")
+        self._write("app/.env", "API_KEY=abc123def456\n")
+        result = self._scan()
+        for item in result.credential_files:
+            self.assertNotIn("\\", item["path"], item["path"])
+        for finding in result.findings:
+            self.assertNotIn("\\", finding.path, finding.path)
+        self.assertIn("root/.ssh/id_rsa", [c["path"] for c in result.credential_files])
+
     def test_a_symlink_out_of_the_tree_is_not_followed(self):
         """A link to / would otherwise walk the whole host filesystem."""
         os.symlink("/", os.path.join(self.root, "escape"))
@@ -323,9 +338,7 @@ class TestDiscoveringTargets(unittest.TestCase):
     def test_an_ordinary_directory_is_scanned_whole(self):
         """`dt secrets .` in a source checkout must scan the checkout."""
         os.makedirs(os.path.join(self.root, "src"), exist_ok=True)
-        self.assertEqual(
-            secrets.discover_targets(self.root), [os.path.abspath(self.root)]
-        )
+        self.assertEqual(secrets.discover_targets(self.root), [os.path.abspath(self.root)])
 
 
 class TestReportLayout(unittest.TestCase):

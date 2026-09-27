@@ -135,7 +135,7 @@ class ScanCoverage:
         """True when every engine ran and nothing was left unread."""
         return not (self.engines_missing or self.engines_failed or self.unscanned)
 
-    def merge(self, other: "ScanCoverage") -> None:
+    def merge(self, other: ScanCoverage) -> None:
         self.files_seen += other.files_seen
         self.bytes_seen += other.bytes_seen
         for name in other.engines_run:
@@ -349,20 +349,24 @@ def _read_trufflehog_json(raw: str, root: str, image: str) -> list[Finding]:
 
 
 def _relativise(path: str, root: str) -> str:
-    """Express an engine's path relative to the scanned root."""
+    """Express an engine's path relative to the scanned root.
+
+    Always forward-slashed, matching `_iter_files`, so the same file gets
+    the same name whichever source reported it and whichever OS ran it.
+    """
     if not path:
         return ""
     absolute = os.path.abspath(path)
     root_abs = os.path.abspath(root)
     if absolute.startswith(root_abs + os.sep):
-        return os.path.relpath(absolute, root_abs)
+        return os.path.relpath(absolute, root_abs).replace(os.sep, "/")
     # Engines invoked with a relative target echo it back verbatim.
     base = os.path.basename(root_abs)
     normalised = path.replace(os.sep, "/")
     marker = base + "/"
     if marker in normalised:
         return normalised.split(marker, 1)[1]
-    return path
+    return normalised
 
 
 def _source_for(path: str) -> str:
@@ -483,9 +487,7 @@ def _is_placeholder(value: str) -> bool:
     return bool(_PLACEHOLDER.match(stripped)) or bool(_NOT_A_SECRET.match(stripped))
 
 
-def secret_env_findings(
-    name: str, value: str, path: str, image: str, source: str
-) -> list[Finding]:
+def secret_env_findings(name: str, value: str, path: str, image: str, source: str) -> list[Finding]:
     """Report a value whose variable name declares it a credential.
 
     This is the measured gap. Engines match shapes, so `SECRET_KEY=hunter2`
@@ -596,8 +598,23 @@ _CREDENTIAL_SUFFIXES = (
 # Archives hide files no engine opened. Recorded so "nothing found" is never
 # confused with "we did not look".
 _ARCHIVE_EXT = {
-    ".zip", ".jar", ".war", ".ear", ".tar", ".gz", ".tgz", ".bz2", ".xz",
-    ".7z", ".rar", ".whl", ".egg", ".apk", ".deb", ".rpm", ".zst",
+    ".zip",
+    ".jar",
+    ".war",
+    ".ear",
+    ".tar",
+    ".gz",
+    ".tgz",
+    ".bz2",
+    ".xz",
+    ".7z",
+    ".rar",
+    ".whl",
+    ".egg",
+    ".apk",
+    ".deb",
+    ".rpm",
+    ".zst",
 }
 
 
@@ -625,6 +642,11 @@ def credential_file_reason(relpath: str) -> str:
 def _iter_files(root: str) -> Iterator[tuple[str, str]]:
     """Yield (absolute, relative) for every regular file under `root`.
 
+    The relative path always uses forward slashes, so a report written on
+    Windows names the same file as one written on Linux. Engines report
+    POSIX-style paths too, which is what lets findings from different
+    sources merge instead of appearing twice.
+
     Symlinks are never followed: a link to `/` would otherwise walk the host
     filesystem, and a link's target inside the tree is visited on its own.
     """
@@ -644,7 +666,8 @@ def _iter_files(root: str) -> Iterator[tuple[str, str]]:
                 if entry.is_dir(follow_symlinks=False):
                     stack.append((entry.path, False))
                 elif entry.is_file(follow_symlinks=False):
-                    yield entry.path, os.path.relpath(entry.path, root)
+                    rel = os.path.relpath(entry.path, root).replace(os.sep, "/")
+                    yield entry.path, rel
             except OSError:
                 continue
 
@@ -753,8 +776,10 @@ def scan_tree_for_secrets(
             continue
 
         name = os.path.basename(rel).lower()
-        if name.startswith(".env") or name in {".envrc", ".npmrc", ".netrc"} or why.endswith(
-            "environment file"
+        if (
+            name.startswith(".env")
+            or name in {".envrc", ".npmrc", ".netrc"}
+            or why.endswith("environment file")
         ):
             collected.extend(_scan_env_file(absolute, rel, result.image))
 

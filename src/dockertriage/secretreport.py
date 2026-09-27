@@ -133,8 +133,11 @@ def _write_image_report(base: str, result: ScanResult) -> str:
         files_dir = os.path.join(folder, "files")
         _makedirs(files_dir)
         for item in result.credential_files:
-            source = os.path.join(result.root, item["path"])
-            target = os.path.join(files_dir, item["path"])
+            # Findings carry forward-slashed paths so reports match across
+            # platforms; turn them back into real paths to copy the files.
+            native = item["path"].replace("/", os.sep)
+            source = os.path.join(result.root, native)
+            target = os.path.join(files_dir, native)
             try:
                 _makedirs(os.path.dirname(target))
                 shutil.copy2(source, target)
