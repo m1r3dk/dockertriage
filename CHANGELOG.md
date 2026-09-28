@@ -55,9 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   reach `UNSCANNED.md` and the terminal summary, and `--include-vendor`
   restores the old behaviour exactly.
 
-  Measured end to end on `sahildhanavde/storechooseapp`: **295 findings to
-  22**, of which 19 are the single leaked `app/.env`. The AWS key, its
-  secret, the GitHub PAT and the Google OAuth secret are all still reported.
+  Measured over the full 89-image corpus: **64,599 findings to 20,939**, and
+  **12,634 unique secrets to 1,579**. All 16 credentials confirmed real by
+  hand were retained, including a Stripe live key and a base64-encoded
+  GitHub token that the previous pipeline could not see at all.
 
 - **`by-type/` is now structured, and deduplicated by secret.** It was the
   only report folder emitting a bare JSON array, and it listed one row per
