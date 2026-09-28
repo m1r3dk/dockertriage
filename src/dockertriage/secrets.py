@@ -853,6 +853,14 @@ _NOISE_FRAGMENTS = (
     (".cache/bootsnap", "bootsnap compile cache"),
     (".bun/install", "bun install cache"),
     (".next/cache", "next.js build cache"),
+    # Compiled bundles: minified copies of source already scanned, where a
+    # match usually points at a library constant rather than this app's key.
+    # Measured on one image: 216 of 295 findings came from `.next/` alone.
+    (".next/server", "next.js build output"),
+    (".next/static", "next.js build output"),
+    (".nuxt/dist", "nuxt build output"),
+    ("opt/yarn-v", "bundled yarn cli"),
+    ("usr/local/lib/node_modules", "globally installed npm package"),
     ("tmp/cache", "framework cache"),
     ("var/cache/apk", "alpine package cache"),
     ("var/cache/apt", "debian package cache"),
