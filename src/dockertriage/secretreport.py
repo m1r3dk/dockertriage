@@ -508,7 +508,7 @@ def _write_unscanned(base: str, scan: SecretScan) -> None:
     _write(os.path.join(base, "UNSCANNED.md"), "\n".join(lines) + "\n")
 
 
-def write_report(scan: SecretScan, out_dir: str) -> str:
+def write_report(scan: SecretScan, out_dir: str, *, complete: bool = True) -> str:
     """Write the whole scan into `out_dir` and return its absolute path."""
     base = os.path.abspath(out_dir)
     _makedirs(base)
@@ -516,6 +516,7 @@ def write_report(scan: SecretScan, out_dir: str) -> str:
     findings = scan.findings
     counts = scan.by_severity()
     cov = scan.coverage()
+    status = "complete" if complete else "in progress - only finished targets are included"
 
     _write(os.path.join(base, "findings.json"), json.dumps(scan.as_dict(), indent=2))
 
@@ -530,6 +531,8 @@ def write_report(scan: SecretScan, out_dir: str) -> str:
         "**Every value in this folder is a live credential in plaintext.**",
         "Treat the folder as the credentials themselves: do not commit it, do",
         "not attach it to a ticket, and delete it once the keys are rotated.",
+        "",
+        f"- status: {status}",
         "",
         "## Totals",
         "",
@@ -567,13 +570,21 @@ def write_report(scan: SecretScan, out_dir: str) -> str:
         for image, count in sorted(by_image.items(), key=lambda kv: -kv[1]):
             lines.append(f"- {image}: {count}")
         lines.append("")
-    else:
+    elif complete:
         lines += [
             "## No findings",
             "",
             "Read `UNSCANNED.md` before concluding the images are clean: an",
             "engine that was not installed reports nothing, which looks",
             "identical to finding nothing.",
+            "",
+        ]
+    else:
+        lines += [
+            "## No findings yet",
+            "",
+            "The scan is still running. This report only includes targets that",
+            "have finished so far.",
             "",
         ]
 
@@ -584,6 +595,20 @@ def write_report(scan: SecretScan, out_dir: str) -> str:
     lines.append("")
 
     _write(os.path.join(base, "SUMMARY.md"), "\n".join(lines) + "\n")
+    marker = os.path.join(base, "IN_PROGRESS.md")
+    if complete:
+        try:
+            os.unlink(marker)
+        except FileNotFoundError:
+            pass
+    else:
+        _write(
+            marker,
+            "# Scan in progress\n\n"
+            "This folder is being updated after each target finishes. "
+            "Open `findings.json`, `SUMMARY.md`, or `by-image/` to see "
+            "completed work so far.\n",
+        )
     return base
 
 

@@ -423,6 +423,18 @@ class TestReportLayout(unittest.TestCase):
         path = os.path.join(self.base, "findings.json")
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
+    def test_an_in_progress_report_is_marked_and_then_cleared(self):
+        out = tempfile.mkdtemp(prefix="dt-secrets-progress-")
+        self.addCleanup(shutil.rmtree, out, True)
+
+        base = secretreport.write_report(self.scan, out, complete=False)
+        self.assertTrue(os.path.exists(os.path.join(base, "IN_PROGRESS.md")))
+        with open(os.path.join(base, "SUMMARY.md"), encoding="utf-8") as fh:
+            self.assertIn("in progress", fh.read())
+
+        secretreport.write_report(self.scan, out)
+        self.assertFalse(os.path.exists(os.path.join(base, "IN_PROGRESS.md")))
+
     def test_an_empty_scan_still_warns_about_uninstalled_engines(self):
         """No findings and no scanner look identical without this."""
         empty = secrets.SecretScan(
@@ -997,6 +1009,48 @@ class TestPackageManagerStores(unittest.TestCase):
             "usr/src/app/config/config.js",
         ):
             self.assertEqual(secrets.noise_reason(path), "", path)
+
+
+class TestInterfaceTextIsNotACredential(unittest.TestCase):
+    """The engines match on the word "password", so they match the UI too.
+
+    A localised app ships one such label per language: 444 distinct values
+    in the corpus contained whitespace and every one sampled was interface
+    copy. The rule is whitespace rather than a word list, because a list
+    would only ever catch English.
+    """
+
+    def test_ui_labels_in_any_language_are_rejected(self):
+        for value in (
+            "Show password",
+            "Confirm Password",
+            "Falsches Passwort",
+            "Masquer le mot de passe",
+            "تأكيد كلمة المرور",
+            "Λάθος κωδικός πρόσβασης",
+            "Incorrect one-time password.",
+        ):
+            self.assertTrue(secrets._is_prose(value), value)
+
+    def test_real_credentials_survive(self):
+        """A password with a space is rare; a sentence about one is not."""
+        for value in (
+            "TradeEarth123!",
+            "AKIASVVNNG4FFDEBLH7C",
+            "rzp_live_RwBMlsLyV3CujY",
+            "Zinni$25Bse$",
+            "YiUJ5OMwTo3jFFQL/mqB91Cwu/damMEl5dhG",
+        ):
+            self.assertFalse(secrets._is_prose(value), value)
+
+    def test_multi_line_credentials_are_exempt(self):
+        """A PEM key and a service-account blob legitimately hold newlines."""
+        self.assertFalse(secrets._is_prose("-----BEGIN PRIVATE KEY-----\nMIIEvg"))
+        self.assertFalse(secrets._is_prose('{\n "type": "service_account"\n}'))
+
+    def test_the_placeholder_filter_uses_it(self):
+        self.assertTrue(secrets._is_placeholder("Show password"))
+        self.assertFalse(secrets._is_placeholder("TradeEarth123!"))
 
 
 if __name__ == "__main__":

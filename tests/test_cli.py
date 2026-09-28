@@ -759,6 +759,56 @@ class TestSecretsRouting(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(os.path.exists(os.path.join(out, "findings.json")))
 
+    def test_secrets_writes_during_the_scan_and_prints_per_image_counts(self):
+        root = tempfile.mkdtemp(prefix="dt-cli-secrets-progress-")
+        self.addCleanup(shutil.rmtree, root, True)
+        target = os.path.join(root, "images")
+        out = os.path.join(root, "report")
+        for name in ("one", "two"):
+            folder = os.path.join(target, name)
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, ".image.json"), "w", encoding="utf-8") as fh:
+                json.dump({"image": name, "complete": True}, fh)
+
+        real_scan = cli_mod.secrets.scan_tree_for_secrets
+        calls: list[str] = []
+
+        def fake_scan(path, **_kw):
+            name = os.path.basename(path)
+            self.assertTrue(os.path.exists(os.path.join(out, "findings.json")))
+            if calls:
+                first_report = os.path.join(out, "by-image", "one", "findings.json")
+                self.assertTrue(os.path.exists(first_report))
+            result = cli_mod.secrets.ScanResult(image=name, root=path)
+            if name == "one":
+                result.findings = [
+                    cli_mod.secrets.Finding(
+                        rule="named-secret-variable",
+                        description="DB_PASSWORD names a credential",
+                        severity="critical",
+                        secret="hunter2",
+                        path="app.env",
+                        image=name,
+                    )
+                ]
+            calls.append(name)
+            return result
+
+        cli_mod.secrets.scan_tree_for_secrets = fake_scan
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                code = cli_mod.main(["secrets", target, "-o", out, "-s", "0"])
+        finally:
+            cli_mod.secrets.scan_tree_for_secrets = real_scan
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, ["one", "two"])
+        text = buf.getvalue()
+        self.assertIn("1 finding", text)
+        self.assertIn("0 findings", text)
+        self.assertFalse(os.path.exists(os.path.join(out, "IN_PROGRESS.md")))
+
     def test_the_report_may_not_be_written_inside_the_scanned_tree(self):
         """Otherwise the next run finds its own output and reports it again."""
         root = tempfile.mkdtemp(prefix="dt-cli-secrets2-")

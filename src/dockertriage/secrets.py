@@ -662,7 +662,31 @@ def _is_placeholder(value: str) -> bool:
     stripped = value.strip().strip("\"'")
     if not stripped or len(stripped) < 4:
         return True
+    if _is_prose(stripped):
+        return True
     return bool(_PLACEHOLDER.match(stripped)) or bool(_NOT_A_SECRET.match(stripped))
+
+
+# Interface copy, not a credential. A password with a space in it is rare;
+# a *sentence* about passwords is everywhere, and a localised app ships one
+# per language. Measured over 89 images, 444 distinct values in the
+# generic-credentials bucket contained whitespace, and every one sampled was
+# a UI label: "Show password", "Falsches Passwort", "تأكيد كلمة المرور".
+#
+# The rule is whitespace, not a word list, because the same label arrives in
+# forty languages and a list would only ever catch English.
+_PROSE_EXCEPTION = re.compile(
+    # A private key is the one credential that legitimately spans lines.
+    r"-----BEGIN|^\{|^\[",
+    re.IGNORECASE,
+)
+
+
+def _is_prose(value: str) -> bool:
+    """True when a value reads as interface text rather than a secret."""
+    if not re.search(r"\s", value):
+        return False
+    return not _PROSE_EXCEPTION.search(value)
 
 
 def secret_env_findings(name: str, value: str, path: str, image: str, source: str) -> list[Finding]:
@@ -1205,6 +1229,16 @@ def scan_tree_for_secrets(
     # against the file rather than guessed, so a secret that merely sits
     # near a comment is still reported.
     collected = _drop_commented_out(collected, root, cov)
+
+    # Interface copy the engines matched on the word "password". A localised
+    # app ships one such string per language, and none of them is a secret.
+    kept = []
+    for finding in collected:
+        if _is_prose(finding.secret.strip().strip("\"'")):
+            cov.note_excluded_finding("interface text, not a credential")
+            continue
+        kept.append(finding)
+    collected = kept
 
     if not cov.engines_run:
         cov.notes.append(

@@ -644,11 +644,12 @@ def secrets_cmd(
 
     scan = secrets.SecretScan()
     try:
+        written = secretreport.write_report(scan, str(out_dir), complete=False)
         for index, root in enumerate(targets, start=1):
+            label = f"[{index}/{len(targets)}] {os.path.basename(root)}"
             if not quiet and len(targets) > 1:
-                console.print(
-                    f"[dim][{index}/{len(targets)}] {os.path.basename(root)}[/dim]",
-                )
+                console.print(f"[dim]{label}[/dim]", end="")
+                console.file.flush()
             result = secrets.scan_tree_for_secrets(
                 root,
                 engines=selected,
@@ -658,15 +659,18 @@ def secrets_cmd(
                 extra_excludes=exclude,
             )
             scan.results.append(result)
+            written = secretreport.write_report(scan, str(out_dir), complete=False)
+            if not quiet and len(targets) > 1:
+                count = len(result.findings)
+                noun = "finding" if count == 1 else "findings"
+                console.print(f" [dim]- {count} {noun}[/dim]")
+        written = secretreport.write_report(scan, str(out_dir))
+    except OSError as exc:
+        raise _fail(f"could not write the report: {exc}") from None
     except KeyboardInterrupt:
         _exit_code = 130
         console.print("[yellow]interrupted[/yellow]")
         raise typer.Exit(130) from None
-
-    try:
-        written = secretreport.write_report(scan, str(out_dir))
-    except OSError as exc:
-        raise _fail(f"could not write the report: {exc}") from None
 
     if not quiet:
         _print_secret_findings(scan, show)
