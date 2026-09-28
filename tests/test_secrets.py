@@ -15,6 +15,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
@@ -735,6 +736,152 @@ class TestByTypeIsStructured(unittest.TestCase):
         self.assertIn("\\|", body)
         delimiters = len(re.findall(r"(?<!\\)\|", body))
         self.assertEqual(delimiters, 8)
+
+
+class TestBetterleaksSupersedesGitleaks(unittest.TestCase):
+    """betterleaks is the maintained continuation of gitleaks.
+
+    Same rule family, a superset of the flags, 11/17 against 9/17 on the
+    reference corpus. Running both walks the tree twice to re-derive the
+    same findings.
+    """
+
+    def test_gitleaks_stands_down_when_betterleaks_is_present(self):
+        both = [secrets.BETTERLEAKS, secrets.GITLEAKS]
+        with unittest.mock.patch.object(
+            secrets.Engine, "available", lambda self: "/bin/" + self.binary
+        ):
+            keep, notes = secrets.select_engines(both)
+        self.assertEqual([e.name for e in keep], ["betterleaks"])
+        self.assertTrue(notes)
+        self.assertIn("supersedes", notes[0])
+
+    def test_gitleaks_still_runs_when_betterleaks_is_absent(self):
+        """A fallback that never runs is not a fallback."""
+
+        def only_gitleaks(self):
+            return "/bin/gitleaks" if self.binary == "gitleaks" else None
+
+        with unittest.mock.patch.object(secrets.Engine, "available", only_gitleaks):
+            keep, notes = secrets.select_engines([secrets.BETTERLEAKS, secrets.GITLEAKS])
+        self.assertIn("gitleaks", [e.name for e in keep])
+        self.assertEqual(notes, [])
+
+    def test_standing_an_engine_down_is_always_recorded(self):
+        """An engine that quietly did not run is the bug this module fears."""
+        with unittest.mock.patch.object(secrets.Engine, "available", lambda self: "/bin/x"):
+            _, notes = secrets.select_engines(secrets.ENGINES)
+        self.assertTrue(any("gitleaks was not run" in n for n in notes))
+
+
+class TestBetterleaksFlags(unittest.TestCase):
+    """Each flag closes a gap measured on real images."""
+
+    def test_archives_and_encodings_are_read(self):
+        flags = secrets._betterleaks_flags(verify=False)
+        self.assertIn("--max-archive-depth", flags)
+        self.assertIn("--max-decode-depth", flags)
+
+    def test_the_source_line_is_requested(self):
+        """Without it, deciding 'is this commented out' re-reads every file."""
+        self.assertIn("--match-context", secrets._betterleaks_flags(verify=False))
+
+    def test_validation_is_opt_in_only(self):
+        """It sends candidate credentials to the provider's API."""
+        self.assertNotIn("--validation", secrets._betterleaks_flags(verify=False))
+        self.assertIn("--validation", secrets._betterleaks_flags(verify=True))
+
+    def test_confidence_is_not_used_to_filter(self):
+        """Measured: --confidence medium dropped a live Google OAuth secret."""
+        self.assertNotIn("--confidence", secrets._betterleaks_flags(verify=True))
+
+
+class TestRicherEngineOutput(unittest.TestCase):
+    """betterleaks reports more per finding than gitleaks did."""
+
+    def _one(self, **extra):
+        item = {
+            "RuleID": "aws-access-token",
+            "Secret": "AKIAIOSFODNN7EXAMPLE",
+            "File": "app/config.py",
+            "StartLine": 3,
+        }
+        item.update(extra)
+        return secrets._read_leaks_json(json.dumps([item]), "betterleaks", "/img", "i")[0]
+
+    def test_confidence_entropy_and_fingerprint_are_kept(self):
+        f = self._one(
+            Attributes={"confidence": "high"},
+            Entropy=4.5464,
+            Fingerprint="app/config.py:aws-access-token:3",
+        )
+        self.assertEqual(f.confidence, "high")
+        self.assertAlmostEqual(f.entropy, 4.5464, places=3)
+        self.assertTrue(f.fingerprint)
+        self.assertEqual(f.as_dict()["confidence"], "high")
+
+    def test_the_source_line_is_carried_on_the_finding(self):
+        f = self._one(MatchContext='# key = "AKIAIOSFODNN7EXAMPLE"')
+        self.assertTrue(f.line_text)
+        self.assertTrue(secrets.is_commented_out(f.line_text, f.secret))
+
+    def test_a_validated_credential_is_marked_live(self):
+        self.assertIs(self._one(ValidationStatus="valid").verified, True)
+
+    def test_a_revoked_credential_is_marked_dead(self):
+        self.assertIs(self._one(ValidationStatus="revoked").verified, False)
+
+    def test_an_unchecked_credential_stays_unknown(self):
+        """'not checked' and 'checked and dead' are different claims."""
+        self.assertIsNone(self._one().verified)
+        self.assertIsNone(self._one(ValidationStatus="needs_validation").verified)
+
+
+class TestArchiveAwarePaths(unittest.TestCase):
+    """betterleaks reports `bundle.tar.gz!inner/x` for archive contents."""
+
+    def test_a_vendored_archive_is_still_noise(self):
+        self.assertTrue(secrets.noise_reason("app/node_modules/p/x.tar.gz!inner/.env"))
+
+    def test_an_application_archive_is_not_noise(self):
+        self.assertEqual(secrets.noise_reason("app/bundle.tar.gz!inner/.env"), "")
+
+    def test_the_archive_and_its_contents_merge_to_one_finding(self):
+        """Two engines name the same leak differently; it is still one leak."""
+        merged = secrets.merge_findings(
+            [
+                secrets.Finding(
+                    rule="stripe",
+                    description="d",
+                    severity="high",
+                    secret="sk_live_x",
+                    path="app/b.tar.gz",
+                    engine="trufflehog",
+                ),
+                secrets.Finding(
+                    rule="stripe-access-token",
+                    description="d",
+                    severity="critical",
+                    secret="sk_live_x",
+                    path="app/b.tar.gz!inner/config.js",
+                    engine="betterleaks",
+                ),
+            ]
+        )
+        self.assertEqual(len(merged), 1)
+        # The more specific path names the file to actually edit.
+        self.assertEqual(merged[0].path, "app/b.tar.gz!inner/config.js")
+
+    def test_archives_are_not_called_unexamined_when_betterleaks_runs(self):
+        """Claiming a gap that no longer exists understates coverage."""
+        root = tempfile.mkdtemp(prefix="dt-arch-")
+        self.addCleanup(shutil.rmtree, root, True)
+        with open(os.path.join(root, "bundle.tar.gz"), "wb") as fh:
+            fh.write(b"\x1f\x8b\x08\x00")
+        if not secrets.BETTERLEAKS.available():
+            self.skipTest("betterleaks is not installed")
+        result = secrets.scan_tree_for_secrets(root, engines=[secrets.BETTERLEAKS])
+        self.assertFalse([u for u in result.coverage.unscanned if "archive" in u["reason"]])
 
 
 if __name__ == "__main__":

@@ -544,7 +544,7 @@ def secrets_cmd(
         False,
         "--verify-live/--no-verify-live",
         "-y/-n",
-        help="Let TruffleHog [dim]call third-party APIs[/dim] to prove a credential still works.",
+        help="Let the engines [dim]call third-party APIs[/dim] to prove a credential still works.",
     ),
     timeout: float = typer.Option(
         600.0,

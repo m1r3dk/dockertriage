@@ -42,6 +42,7 @@ __all__ = [
     "available_engines",
     "credential_file_reason",
     "discover_targets",
+    "select_engines",
     "is_commented_out",
     "merge_findings",
     "noise_reason",
@@ -77,6 +78,17 @@ class Finding:
     engine: str = "dockertriage"
     verified: bool | None = None
     image: str = ""
+    # What the engine said about its own match. Kept because `confidence`
+    # answers "how sure was the regex" while `severity` answers "what does
+    # this unlock", and a responder wants both.
+    confidence: str = ""
+    entropy: float = 0.0
+    # betterleaks' stable id for a finding, which survives re-runs and so
+    # lets one report be diffed against the next.
+    fingerprint: str = ""
+    # The source line, when the engine returned it. Avoids re-reading the
+    # file to decide whether the credential is commented out.
+    line_text: str = ""
 
     @property
     def key(self) -> tuple[str, str, int]:
@@ -85,8 +97,12 @@ class Finding:
         Deliberately not keyed on rule or engine, so two engines reporting
         the same leak collapse into one. The same password reused in two
         files stays two findings, because both have to be fixed.
+
+        A path inside an archive collapses onto the archive itself, because
+        one engine reads `bundle.tar.gz!inner/config.js` while another sees
+        only `bundle.tar.gz`. They are the same leak in the same file.
         """
-        return (self.secret, self.path, self.line)
+        return (self.secret, self.path.split("!", 1)[0], self.line)
 
     def as_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -106,6 +122,12 @@ class Finding:
             d["context"] = self.context
         if self.verified is not None:
             d["verified"] = self.verified
+        if self.confidence:
+            d["confidence"] = self.confidence
+        if self.entropy:
+            d["entropy"] = round(self.entropy, 4)
+        if self.fingerprint:
+            d["fingerprint"] = self.fingerprint
         return d
 
 
@@ -288,16 +310,23 @@ GITLEAKS = Engine(
     "gitleaks",
     "gitleaks",
     "brew install gitleaks",
-    "9/17, same rule family as betterleaks",
+    "9/17, superseded by betterleaks; only used when betterleaks is absent",
 )
 TRUFFLEHOG = Engine(
     "trufflehog",
     "trufflehog",
     "brew install trufflehog",
-    "5/17, but the only engine that can verify a credential is live",
+    "5/17, a second opinion with its own rule set",
 )
 
 ENGINES = [BETTERLEAKS, GITLEAKS, TRUFFLEHOG]
+
+# betterleaks is the maintained continuation of gitleaks: same rule family,
+# a superset of the flags, and measured higher on the reference corpus
+# (11/17 against 9/17). Running both costs a second full walk of the tree to
+# re-derive nearly the same findings, so gitleaks is a stand-in for when
+# betterleaks is not installed rather than a peer.
+_SUPERSEDED = {GITLEAKS.name: BETTERLEAKS.name}
 
 
 def available_engines() -> tuple[list[Engine], list[Engine]]:
@@ -305,6 +334,28 @@ def available_engines() -> tuple[list[Engine], list[Engine]]:
     present = [e for e in ENGINES if e.available()]
     missing = [e for e in ENGINES if not e.available()]
     return present, missing
+
+
+def select_engines(engines: list[Engine]) -> tuple[list[Engine], list[str]]:
+    """Drop an engine when the tool that replaced it is also installed.
+
+    Returns the engines to run and a note for each one stood down, because
+    an engine that silently did not run is the failure mode this module
+    exists to prevent.
+    """
+    installed = {e.name for e in engines if e.available()}
+    keep: list[Engine] = []
+    notes: list[str] = []
+    for engine in engines:
+        replacement = _SUPERSEDED.get(engine.name)
+        if replacement and replacement in installed:
+            notes.append(
+                f"{engine.name} was not run: {replacement} supersedes it "
+                f"(same rules, measured higher), and both would scan the same tree twice"
+            )
+            continue
+        keep.append(engine)
+    return keep, notes
 
 
 def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
@@ -338,21 +389,55 @@ def _read_leaks_json(raw: str, engine: str, root: str, image: str) -> list[Findi
         # different runs line up.
         path = _relativise(path, root)
         rule = str(item.get("RuleID") or "unknown")
+        attributes = item.get("Attributes")
+        confidence = ""
+        if isinstance(attributes, dict):
+            confidence = str(attributes.get("confidence") or "")
+        # betterleaks returns the surrounding source line under --match-context.
+        # Preferring it over `Match` means a commented-out credential can be
+        # recognised from the engine's own output, with no second read.
+        line_text = str(item.get("MatchContext") or "")
         out.append(
             Finding(
                 rule=rule,
                 description=str(item.get("Description") or rule),
-                severity=_severity_for(rule, item.get("Attributes")),
+                severity=_severity_for(rule, attributes),
                 secret=secret,
                 path=path,
                 line=int(item.get("StartLine") or 0),
-                context=str(item.get("Match") or "")[:200],
+                context=(line_text or str(item.get("Match") or ""))[:200],
                 engine=engine,
                 image=image,
                 source=_source_for(path),
+                verified=_validation_state(item),
+                confidence=confidence,
+                entropy=float(item.get("Entropy") or 0.0),
+                fingerprint=str(item.get("Fingerprint") or ""),
+                line_text=line_text,
             )
         )
     return out
+
+
+def _validation_state(item: dict[str, Any]) -> bool | None:
+    """Read betterleaks' --validation verdict, if it ran.
+
+    Only a proven-live credential is True and a proven-dead one False;
+    everything else stays None, because "we did not check" and "we checked
+    and it is dead" are different claims.
+    """
+    for key in ("ValidationStatus", "Validation", "Status"):
+        raw = item.get(key)
+        if isinstance(raw, dict):
+            raw = raw.get("status") or raw.get("Status")
+        if not raw:
+            continue
+        state = str(raw).strip().lower()
+        if state == "valid":
+            return True
+        if state in {"invalid", "revoked"}:
+            return False
+    return None
 
 
 def _read_trufflehog_json(raw: str, root: str, image: str) -> list[Finding]:
@@ -436,6 +521,46 @@ def _severity_for(rule: str, attributes: Any) -> str:
     return "high"
 
 
+# betterleaks does several things gitleaks cannot, and each one closes a gap
+# this module previously worked around or reported as a permanent limitation.
+#
+#   --max-archive-depth  reads inside tar/zip/whl. 500 archives were recorded
+#                        as "contents unexamined" in the last full run; a
+#                        Stripe live key inside a .tar.gz proved findable.
+#   --max-decode-depth   decodes base64 before matching. The `ghs_` GitHub
+#                        tokens in `.git/config` are base64 inside an
+#                        `AUTHORIZATION: basic` header and were invisible.
+#   --match-context      returns the source line with the finding, so a
+#                        commented-out credential can be told from a live one
+#                        without re-reading every implicated file.
+#
+# Deliberately not used: --confidence. Measured on one real image it cut 215
+# findings to 59 at `medium`, but among the dropped was a live Google OAuth
+# client secret. Severity here is about what a credential unlocks, not how
+# sure the regex was, so the filtering happens on our side where a miss is
+# visible.
+_ARCHIVE_DEPTH = "8"
+_DECODE_DEPTH = "5"
+_MATCH_CONTEXT = "1L"
+
+
+def _betterleaks_flags(verify: bool) -> list[str]:
+    """The betterleaks-only flags, each closing a measured gap."""
+    flags = [
+        "--max-archive-depth",
+        _ARCHIVE_DEPTH,
+        "--max-decode-depth",
+        _DECODE_DEPTH,
+        "--match-context",
+        _MATCH_CONTEXT,
+    ]
+    if verify:
+        # Same contract as TruffleHog's: only ever on an explicit request,
+        # because it sends candidate credentials to the provider's API.
+        flags.append("--validation")
+    return flags
+
+
 def run_engine(
     engine: Engine, root: str, image: str, timeout: float, verify: bool
 ) -> tuple[list[Finding], str | None]:
@@ -448,21 +573,21 @@ def run_engine(
         if engine.name in {"betterleaks", "gitleaks"}:
             # Report to stdout via '-', so nothing is written next to the
             # image being scanned.
-            proc = _run(
-                [
-                    binary,
-                    "dir",
-                    root,
-                    "--report-format",
-                    "json",
-                    "--report-path",
-                    "-",
-                    "--no-banner",
-                    "--exit-code",
-                    "0",
-                ],
-                timeout,
-            )
+            cmd = [
+                binary,
+                "dir",
+                root,
+                "--report-format",
+                "json",
+                "--report-path",
+                "-",
+                "--no-banner",
+                "--exit-code",
+                "0",
+            ]
+            if engine.name == "betterleaks":
+                cmd += _betterleaks_flags(verify)
+            proc = _run(cmd, timeout)
             return _read_leaks_json(proc.stdout, engine.name, root, image), None
 
         if engine.name == "trufflehog":
@@ -752,7 +877,18 @@ def noise_reason(relpath: str) -> str:
     Returning a reason rather than a bool so the report can say which kind
     of noise was skipped, and how much of it.
     """
+    # betterleaks names a file inside an archive `bundle.tar.gz!inner/x`.
+    # Both halves are judged: a vendored tarball is noise, and so is a
+    # `node_modules` that only exists inside one.
     posix = relpath.replace(os.sep, "/")
+    for segment in posix.split("!"):
+        found = _noise_reason_for(segment)
+        if found:
+            return found
+    return ""
+
+
+def _noise_reason_for(posix: str) -> str:
     parts = posix.split("/")
     for part in parts:
         reason = _VENDOR_DIRS.get(part) or _CACHE_DIRS.get(part)
@@ -895,6 +1031,10 @@ def merge_findings(findings: Iterable[Finding]) -> list[Finding]:
             best[f.key] = f
         elif SEVERITY_ORDER.get(f.severity, 9) < SEVERITY_ORDER.get(current.severity, 9):
             best[f.key] = f
+        elif len(f.path) > len(current.path) and f.path.startswith(current.path):
+            # `bundle.tar.gz!inner/config.js` names the file the credential
+            # is actually in; `bundle.tar.gz` only names the container.
+            best[f.key] = f
     out = []
     for key, finding in best.items():
         # Agreement between independent engines is signal worth keeping.
@@ -932,6 +1072,12 @@ def scan_tree_for_secrets(
     collected: list[Finding] = []
 
     extra = tuple(e.strip().strip("/") for e in extra_excludes if e and e.strip())
+
+    # Decided before the walk, because it changes what the walk records about
+    # archives: betterleaks reads inside them, so calling them unexamined
+    # when it is running would understate coverage.
+    planned, _ = select_engines(engines if engines is not None else ENGINES)
+    archives_covered = any(e.name == "betterleaks" and e.available() for e in planned)
 
     def excluded_because(rel: str) -> str:
         """Why this path is out of scope, or '' if it is in scope."""
@@ -980,7 +1126,10 @@ def scan_tree_for_secrets(
             result.credential_files.append({"path": rel, "reason": why, "bytes": str(size)})
 
         if os.path.splitext(rel)[1].lower() in _ARCHIVE_EXT:
-            cov.note_unscanned(rel, "archive: no engine unpacks it, contents unexamined")
+            # betterleaks unpacks archives itself, so only say the contents
+            # went unread when the engine that reads them is not running.
+            if not archives_covered:
+                cov.note_unscanned(rel, "archive: no engine unpacks it, contents unexamined")
             continue
 
         name = os.path.basename(rel).lower()
@@ -994,6 +1143,8 @@ def scan_tree_for_secrets(
     # The engines. Absence is recorded rather than tolerated silently: an
     # uninstalled scanner and a clean image produce the same empty list.
     selected = engines if engines is not None else ENGINES
+    selected, superseded = select_engines(selected)
+    cov.notes.extend(superseded)
     for engine in selected:
         if not engine.available():
             cov.engines_missing.append(engine.name)
@@ -1029,8 +1180,11 @@ def scan_tree_for_secrets(
             "which finds credential files and named variables but not tokens "
             "recognised by shape. Install betterleaks for full coverage."
         )
-    if verify and "trufflehog" in cov.engines_run:
-        cov.notes.append("TruffleHog verification was enabled: candidates were sent to their APIs.")
+    if verify and cov.engines_run:
+        cov.notes.append(
+            f"Live verification was enabled for {', '.join(cov.engines_run)}: "
+            f"candidate credentials were sent to their providers' APIs."
+        )
 
     result.findings = merge_findings(collected)
     return result
@@ -1039,23 +1193,31 @@ def scan_tree_for_secrets(
 def _drop_commented_out(findings: list[Finding], root: str, cov: ScanCoverage) -> list[Finding]:
     """Remove findings whose line is commented out in the real file.
 
-    Reads each implicated file once. A finding whose file cannot be read is
-    kept: an unreadable file is not evidence that the secret is disabled.
+    betterleaks returns the source line with `--match-context`, so most
+    findings are decided without touching the disk. Anything without one
+    falls back to reading the file, each read at most once.
     """
-    by_file: dict[str, list[Finding]] = {}
     out: list[Finding] = []
+    needs_read: dict[str, list[Finding]] = {}
+
     for f in findings:
-        if f.source == "filesystem" and f.line:
-            by_file.setdefault(f.path, []).append(f)
+        if f.line_text:
+            if is_commented_out(f.line_text, f.secret):
+                cov.note_excluded_finding("commented-out code")
+                continue
+            out.append(f)
+        elif f.source == "filesystem" and f.line:
+            needs_read.setdefault(f.path, []).append(f)
         else:
             out.append(f)
 
-    for rel, group in by_file.items():
+    for rel, group in needs_read.items():
         lines: list[str] | None = None
         try:
             with open(os.path.join(root, rel.replace("/", os.sep)), "rb") as fh:
                 lines = fh.read(8 * 1024 * 1024).decode("utf-8", "replace").splitlines()
         except OSError:
+            # An unreadable file is not evidence that the secret is disabled.
             lines = None
         for f in group:
             if lines is not None and 1 <= f.line <= len(lines):
