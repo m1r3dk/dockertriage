@@ -884,5 +884,85 @@ class TestArchiveAwarePaths(unittest.TestCase):
         self.assertFalse([u for u in result.coverage.unscanned if "archive" in u["reason"]])
 
 
+class TestRotationKey(unittest.TestCase):
+    """What gets rotated is the credential, not the endpoint it named.
+
+    A rotating-proxy password appeared under 143 distinct
+    `user:pass@host:port` strings in one file. Reported as 143 rows it looks
+    like 143 jobs; it is one password.
+    """
+
+    def test_a_credential_uri_groups_on_its_password(self):
+        a = "http://nn-res-ANY:uqHmY13vnLGHENR@148.113.223.106:5959"
+        b = "http://nn-res-ANY:uqHmY13vnLGHENR@40.160.33.38:5959"
+        self.assertEqual(secretreport._rotation_key(a), secretreport._rotation_key(b))
+        self.assertEqual(secretreport._rotation_key(a), "uqHmY13vnLGHENR")
+
+    def test_a_plain_token_is_its_own_key(self):
+        for value in ("AKIASVVNNG4FFDEBLH7C", "ghp_" + "FakeFixtureValueNotARealTokenXYZ0123"):
+            self.assertEqual(secretreport._rotation_key(value), value)
+
+    def test_a_url_without_credentials_is_untouched(self):
+        url = "https://example.com/path"
+        self.assertEqual(secretreport._rotation_key(url), url)
+
+    def test_the_endpoints_are_kept_as_evidence(self):
+        """Collapsing must not lose where the credential was used."""
+        findings = [
+            secrets.Finding(
+                rule="URI",
+                description="d",
+                severity="high",
+                secret=f"http://u:pw@host{n}.example.com:5959",
+                path="app/crawlers/spiders/x.py",
+                line=100 + n,
+                image="img:1",
+            )
+            for n in range(4)
+        ]
+        groups = secretreport._group_by_secret(findings)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["secret"], "pw")
+        self.assertEqual(groups[0]["occurrence_count"], 4)
+        self.assertEqual(groups[0]["variant_count"], 4)
+        self.assertIn("host0.example.com", " ".join(groups[0]["variants"]))
+
+    def test_distinct_passwords_stay_distinct(self):
+        """Grouping on the credential must not merge two real credentials."""
+        findings = [
+            secrets.Finding(
+                rule="URI",
+                description="d",
+                severity="high",
+                secret=f"http://u:{pw}@host.example.com",
+                path="a.py",
+                line=n,
+                image="img:1",
+            )
+            for n, pw in enumerate(("firstpass", "secondpass"))
+        ]
+        self.assertEqual(len(secretreport._group_by_secret(findings)), 2)
+
+
+class TestSeedDataIsNotCredentials(unittest.TestCase):
+    """Rails seed files are application records, not secrets.
+
+    `legacy_event_covers.json` produced 3,361 findings, every one an
+    ActiveStorage blob key naming an uploaded image.
+    """
+
+    def test_seed_and_fixture_directories_are_noise(self):
+        self.assertTrue(secrets.noise_reason("rails/db/seeds/legacy_event_covers.json"))
+        self.assertTrue(secrets.noise_reason("app/db/fixtures/users.yml"))
+
+    def test_application_source_is_never_treated_as_seed_data(self):
+        for path in (
+            "usr/share/nginx/html/js/app.js",
+            "app/db/models/user.rb",
+            "code/dematade/settings.py",
+        ):
+            self.assertEqual(secrets.noise_reason(path), "", path)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

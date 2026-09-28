@@ -14,6 +14,7 @@ Stdlib only, like every module except the CLI.
 
 import json
 import os
+import re
 import shutil
 from typing import Any
 
@@ -208,8 +209,30 @@ def _write_image_report(base: str, result: ScanResult) -> str:
     return folder
 
 
+# A credential URI carries the secret plus whatever host it pointed at. One
+# rotating-proxy password appeared under 143 distinct `user:pass@host:port`
+# strings in a single file, which is 143 rows for one password to change.
+# Grouping on the credential rather than the whole URI states the job as it
+# will actually be done, with the hosts kept alongside as evidence.
+_CREDENTIAL_URI = re.compile(
+    r"^(?P<scheme>[a-z][\w+.-]*)://(?P<user>[^:/@\s]+):(?P<secret>[^@\s]+)@"
+)
+
+
+def _rotation_key(secret: str) -> str:
+    """What actually has to be changed to make this secret useless.
+
+    For a credential URI that is the password, not the endpoint it names.
+    Everything else is its own rotation key.
+    """
+    match = _CREDENTIAL_URI.match(secret.strip())
+    if match:
+        return match.group("secret")
+    return secret
+
+
 def _group_by_secret(findings: list[Finding]) -> list[dict[str, Any]]:
-    """Collapse findings to one entry per distinct secret.
+    """Collapse findings to one entry per distinct credential.
 
     The same credential in 66 images is one thing to rotate, not 66. The
     places it appears become `occurrences`, because a responder still has to
@@ -217,10 +240,10 @@ def _group_by_secret(findings: list[Finding]) -> list[dict[str, Any]]:
     """
     groups: dict[str, list[Finding]] = {}
     for f in findings:
-        groups.setdefault(f.secret, []).append(f)
+        groups.setdefault(_rotation_key(f.secret), []).append(f)
 
     out: list[dict[str, Any]] = []
-    for secret, items in groups.items():
+    for key, items in groups.items():
         best = min(items, key=lambda f: SEVERITY_ORDER.get(f.severity, 9))
         engines: set[str] = set()
         for f in items:
@@ -235,22 +258,27 @@ def _group_by_secret(findings: list[Finding]) -> list[dict[str, Any]]:
             }
             for f in sorted(items, key=lambda f: (f.image, f.path, f.line))
         ]
-        out.append(
-            {
-                "secret": secret,
-                "rule": best.rule,
-                "description": best.description,
-                "severity": best.severity,
-                "engines": sorted(engines),
-                "verified": any(f.verified for f in items) or None,
-                # A secret found only inside installed packages is almost
-                # always the package author's example, not this image's leak.
-                "vendor": all(o["vendor"] for o in occurrences),
-                "occurrence_count": len(items),
-                "images": sorted({f.image for f in items if f.image}),
-                "occurrences": occurrences,
-            }
-        )
+        variants = sorted({f.secret for f in items})
+        entry = {
+            "secret": key,
+            "rule": best.rule,
+            "description": best.description,
+            "severity": best.severity,
+            "engines": sorted(engines),
+            "verified": any(f.verified for f in items) or None,
+            # A secret found only inside installed packages is almost
+            # always the package author's example, not this image's leak.
+            "vendor": all(o["vendor"] for o in occurrences),
+            "occurrence_count": len(items),
+            "images": sorted({f.image for f in items if f.image}),
+            "occurrences": occurrences,
+        }
+        if variants != [key]:
+            # The endpoints this one credential was used against. Capped
+            # because a rotating proxy list runs to hundreds of hosts.
+            entry["variants"] = variants[:50]
+            entry["variant_count"] = len(variants)
+        out.append(entry)
 
     # Worst first, then the most widespread, because a key in 66 images is a
     # bigger job than the same severity in one.

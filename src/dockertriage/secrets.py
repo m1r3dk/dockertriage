@@ -862,6 +862,12 @@ _NOISE_FRAGMENTS = (
     ("opt/yarn-v", "bundled yarn cli"),
     ("usr/local/lib/node_modules", "globally installed npm package"),
     ("tmp/cache", "framework cache"),
+    # Seed and fixture data. A Rails seed file is rows of application
+    # records, and its high-entropy columns are object keys and checksums:
+    # `legacy_event_covers.json` alone produced 3,361 findings, every one an
+    # ActiveStorage blob key naming an uploaded image.
+    ("db/seeds", "database seed data"),
+    ("db/fixtures", "test fixture data"),
     ("var/cache/apk", "alpine package cache"),
     ("var/cache/apt", "debian package cache"),
     ("var/lib/apt", "debian package database"),
