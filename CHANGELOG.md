@@ -7,14 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **betterleaks is now the primary engine, and gitleaks stands down.**
+  gitleaks is no longer maintained; betterleaks is its continuation, with the
+  same rule family, a superset of the flags, and 11/17 against 9/17 on the
+  reference corpus. Running both walked every tree twice to re-derive nearly
+  the same findings, so when betterleaks is installed gitleaks is skipped and
+  a note records why. When betterleaks is absent, gitleaks still runs.
+
+  Three of its capabilities close gaps this tool previously reported as
+  permanent:
+
+  - `--max-archive-depth` reads inside `tar`/`zip`/`whl`. The last full run
+    recorded **500 archives** as "contents unexamined"; a Stripe live key
+    inside a `.tar.gz` is now reported at `bundle.tar.gz!inner/config.js`.
+  - `--max-decode-depth` decodes base64 before matching. The `ghs_` GitHub
+    tokens in `.git/config` sit base64-encoded inside an
+    `AUTHORIZATION: basic` header and were invisible to a directory scan.
+  - `--match-context` returns the source line, so the commented-out check
+    reads the engine's own output instead of re-opening every file.
+
+  Findings now carry `confidence`, `entropy` and `fingerprint`, and
+  `--verify-live` maps to `betterleaks --validation` as well as TruffleHog,
+  with `valid`/`revoked` read into the existing three-state `verified` field.
+
+  `--confidence` is deliberately **not** used as a filter: measured on one
+  real image it cut 215 findings to 59 at `medium`, but among those dropped
+  was a live Google OAuth client secret.
+
 - **`dt secrets` no longer searches other people's code.** Measured across 89
   real images, 55% of the 64,599 findings came from `node_modules`,
   virtualenvs, `site-packages`, npm's `_cacache`, `APKINDEX` and distribution
-  docs. Every one sampled was a library docstring, an npm dist-tag or a
-  package checksum, so nothing in that half could be rotated.
+  docs, and compiled build output such as `.next/server`. Every one sampled
+  was a library docstring, an npm dist-tag or a package checksum, so nothing
+  in that half could be rotated.
 
-  Those trees are now pruned from the walk and filtered out of engine output.
-  Two new flags control it:
+  Those trees are pruned from the walk and filtered out of engine output.
+  Two flags control it:
 
   ```
     dt secrets output --include-vendor      # search them anyway
@@ -26,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `coverage.excluded_findings` count what was set aside and why, the totals
   reach `UNSCANNED.md` and the terminal summary, and `--include-vendor`
   restores the old behaviour exactly.
+
+  Measured end to end on `sahildhanavde/storechooseapp`: **295 findings to
+  22**, of which 19 are the single leaked `app/.env`. The AWS key, its
+  secret, the GitHub PAT and the Google OAuth secret are all still reported.
 
 - **`by-type/` is now structured, and deduplicated by secret.** It was the
   only report folder emitting a bare JSON array, and it listed one row per
@@ -45,8 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - **A credential on a commented-out line is no longer reported as live.**
   Measured at 653 findings (3.6%) across the corpus: rotated-out tokens kept
-  in comments. The line is read from the real file rather than guessed, so a
-  comment sitting above working code cannot suppress the code below it.
+  in comments. The line comes from the engine's own output where available,
+  so a comment sitting above working code cannot suppress the code below it.
 - **Widened the placeholder filter.** `admin`, `root`, `wstoken`, `abc12345`
   and `TESTPURPOSE` passed the old rule and accounted for 612 findings, none
   of them rotatable.
@@ -54,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   private keys were emitted raw, splitting a table row across 1,798
   characters and several lines. They are now escaped and truncated the same
   way the per-image reports already did it.
+- **A secret found both inside an archive and on the archive itself is one
+  finding.** TruffleHog reports `bundle.tar.gz` while betterleaks reports
+  `bundle.tar.gz!inner/config.js`; the merge keeps the specific path, which
+  is the file someone actually has to edit.
 
 - **Extract only part of an image, and know what was left out.** Container
   images are mostly base OS, so `dt pull --path /app` (repeatable, `-P`) and
