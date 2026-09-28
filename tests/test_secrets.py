@@ -964,5 +964,40 @@ class TestSeedDataIsNotCredentials(unittest.TestCase):
             self.assertEqual(secrets.noise_reason(path), "", path)
 
 
+class TestPackageManagerStores(unittest.TestCase):
+    """Every package manager keeps a content-addressed store somewhere.
+
+    They are the same thing as `node_modules` under a different name: code
+    nobody here wrote, plus hashes that every entropy rule matches. Missing
+    one means its whole store is reported as this image's secrets.
+    """
+
+    def test_every_known_store_is_recognised(self):
+        for path in (
+            "usr/local/share/pnpm/store/v10/files/2b/ea367018",
+            "root/.local/share/pnpm/store/v3/files/aa/bb",
+            "app/node_modules/.pnpm/lodash@4/node_modules/lodash/x.js",
+            "var/www/.composer/cache/files/admad/cakephp-social-auth/527",
+            "root/.yarn/cache/some-pkg.zip",
+            "root/.cache/go-build/ab/cdef",
+            "root/.cache/wheels/ab/cd/ef/pkg.whl",
+            "nix/store/abc123-foo/bin/x",
+            "usr/share/perl5/Foo/Bar.pm",
+            "opt/conda/pkgs/numpy-1.0/x.py",
+            "root/.deno/deps/https/example.com/x",
+        ):
+            self.assertTrue(secrets.noise_reason(path), path)
+
+    def test_application_directories_that_merely_look_similar_are_kept(self):
+        """`app/store/` is a redux store, not a package store."""
+        for path in (
+            "app/store/reducers/auth.js",
+            "app/src/store/index.ts",
+            "opt/app/pnpm-lock.yaml",
+            "usr/src/app/config/config.js",
+        ):
+            self.assertEqual(secrets.noise_reason(path), "", path)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -845,12 +845,30 @@ _CACHE_DIRS = {
 
 # Path fragments, checked as substrings, for caches that need two segments
 # to identify and for OS package metadata.
+#
+# Every package manager keeps a content-addressed store of downloaded
+# packages somewhere, under a name the vendor-directory list above cannot
+# see. They are the same thing as `node_modules`: code nobody here wrote,
+# and hashes that every entropy rule matches.
 _NOISE_FRAGMENTS = (
+    ("pnpm/store", "pnpm content-addressed store"),
+    ("/.pnpm/", "pnpm virtual store"),
     (".cache/yarn", "yarn cache"),
+    (".yarn/cache", "yarn berry cache"),
+    (".yarn/berry", "yarn berry store"),
     (".cache/pip", "pip cache"),
+    (".cache/wheels", "pip wheel cache"),
     (".cache/node", "node cache"),
+    (".cache/go-build", "go build cache"),
     (".cache/ms-playwright", "playwright cache"),
     (".cache/bootsnap", "bootsnap compile cache"),
+    (".composer/cache", "composer cache"),
+    (".cpanm", "cpan build cache"),
+    ("perl5/", "installed perl module"),
+    ("conda/pkgs", "conda package cache"),
+    ("nix/store", "nix store"),
+    ("deno/deps", "deno dependency cache"),
+    ("deno/gen", "deno codegen cache"),
     (".bun/install", "bun install cache"),
     (".next/cache", "next.js build cache"),
     # Compiled bundles: minified copies of source already scanned, where a
