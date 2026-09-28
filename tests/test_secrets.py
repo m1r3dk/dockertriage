@@ -351,6 +351,10 @@ class TestReportLayout(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.out, True)
         self.src = tempfile.mkdtemp(prefix="dt-secrets-src-")
         self.addCleanup(shutil.rmtree, self.src, True)
+        credentials = os.path.join(self.src, "root", ".aws", "credentials")
+        os.makedirs(os.path.dirname(credentials), exist_ok=True)
+        with open(credentials, "w", encoding="utf-8") as fh:
+            fh.write("aws_access_key_id = AKIAZ4XY7QWERTYUIOPA\n")
 
         result = secrets.ScanResult(image="example/app:1.0", root=self.src)
         result.findings = [
@@ -372,6 +376,9 @@ class TestReportLayout(unittest.TestCase):
                 source="image-config",
                 image="example/app:1.0",
             ),
+        ]
+        result.credential_files = [
+            {"path": "root/.aws/credentials", "reason": "AWS credentials file", "bytes": "44"}
         ]
         result.env = [{"name": "DB_PASSWORD", "value": "hunter2"}]
         result.coverage.files_seen = 4
@@ -415,6 +422,30 @@ class TestReportLayout(unittest.TestCase):
 
     def test_the_environment_is_written_out_in_full(self):
         self.assertIn("DB_PASSWORD=hunter2", self._read("by-image", "example_app_1.0", "env.txt"))
+
+    def test_secret_files_are_copied_directly_under_the_image_folder(self):
+        copied = os.path.join(
+            self.base,
+            "by-image",
+            "example_app_1.0",
+            "root",
+            ".aws",
+            "credentials",
+        )
+        self.assertTrue(os.path.exists(copied), copied)
+        with open(copied, encoding="utf-8") as fh:
+            self.assertIn("AKIAZ4XY7QWERTYUIOPA", fh.read())
+
+    def test_each_image_has_an_inventory_for_copied_files(self):
+        text = self._read("by-image", "example_app_1.0", "INVENTORY.md")
+        self.assertIn("root/.aws/credentials", text)
+        self.assertIn("AWS credentials file", text)
+        self.assertIn("contains 1 finding", text)
+
+    def test_by_image_has_a_top_level_inventory(self):
+        text = self._read("by-image", "INVENTORY.md")
+        self.assertIn("example/app:1.0", text)
+        self.assertIn("example_app_1.0/root/.aws/credentials", text)
 
     @unittest.skipIf(os.name == "nt", "POSIX permission bits only")
     def test_the_folder_is_owner_only(self):

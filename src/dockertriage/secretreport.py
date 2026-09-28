@@ -120,6 +120,16 @@ def _makedirs(path: str) -> None:
         pass
 
 
+_IMAGE_REPORT_FILES = {"SUMMARY.md", "INVENTORY.md", "findings.json", "env.json", "env.txt"}
+
+
+def _copied_relpath(path: str) -> str:
+    native = path.replace("/", os.sep)
+    if os.path.dirname(native) == "" and os.path.basename(native) in _IMAGE_REPORT_FILES:
+        return "files/" + path
+    return path
+
+
 def _severity_line(counts: dict[str, int]) -> str:
     parts = [
         f"{counts[name]} {name}"
@@ -147,8 +157,159 @@ def _finding_rows(findings: list[Finding]) -> list[str]:
     return rows
 
 
+def _source_file_paths(result: ScanResult) -> dict[str, dict[str, Any]]:
+    """Files worth copying because they are credential files or hold findings."""
+    paths: dict[str, dict[str, Any]] = {}
+    for item in result.credential_files:
+        path = str(item["path"])
+        paths.setdefault(
+            path,
+            {
+                "path": path,
+                "bytes": item.get("bytes", ""),
+                "reasons": [],
+                "findings": 0,
+                "rules": set(),
+            },
+        )["reasons"].append(str(item.get("reason", "credential file")))
+
+    for finding in result.findings:
+        if finding.source != "filesystem" or not finding.path or "!" in finding.path:
+            continue
+        if finding.severity not in {"critical", "high"} and finding.path not in paths:
+            continue
+        path = finding.path
+        entry = paths.setdefault(
+            path,
+            {
+                "path": path,
+                "bytes": "",
+                "reasons": [],
+                "findings": 0,
+                "rules": set(),
+            },
+        )
+        entry["findings"] += 1
+        entry["rules"].add(finding.rule)
+    for entry in paths.values():
+        if entry["findings"]:
+            rules = ", ".join(sorted(entry["rules"]))
+            entry["reasons"].append(f"contains {entry['findings']} finding(s): {rules}")
+        entry["rules"] = sorted(entry["rules"])
+        entry["reasons"] = sorted(set(entry["reasons"]))
+    return paths
+
+
+def _copy_source_files(folder: str, result: ScanResult) -> list[dict[str, Any]]:
+    """Copy secret-bearing files under the image folder, preserving paths."""
+    copied: list[dict[str, Any]] = []
+    base = os.path.abspath(folder)
+    for path, item in sorted(_source_file_paths(result).items()):
+        native = path.replace("/", os.sep)
+        source = os.path.join(result.root, native)
+        if not os.path.isfile(source):
+            continue
+        target = os.path.abspath(os.path.join(folder, native))
+        rel_target = path
+        if not (target == base or target.startswith(base + os.sep)):
+            continue
+        rel_target = _copied_relpath(path)
+        if rel_target != path:
+            target = os.path.abspath(os.path.join(folder, rel_target.replace("/", os.sep)))
+        try:
+            _makedirs(os.path.dirname(target))
+            shutil.copy2(source, target)
+            os.chmod(target, _FILE_MODE)
+            size = os.path.getsize(source)
+            copied.append(
+                {
+                    "path": path,
+                    "copied_to": rel_target.replace(os.sep, "/"),
+                    "bytes": size,
+                    "reasons": item["reasons"],
+                    "findings": item["findings"],
+                    "rules": item["rules"],
+                }
+            )
+        except OSError:
+            # The finding remains in findings.json; losing one convenience copy
+            # must not fail the whole report.
+            continue
+    return copied
+
+
+def _inventory_rows(items: list[dict[str, Any]]) -> list[str]:
+    rows = [
+        "| source path | copied to | reason | findings | bytes |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for item in items:
+        reasons = "; ".join(item["reasons"]).replace("|", "\\|")
+        rows.append(
+            f"| `{item['path']}` | `{item['copied_to']}` | {reasons} | "
+            f"{item['findings']} | {item['bytes']} |"
+        )
+    return rows
+
+
+def _write_image_inventory(folder: str, result: ScanResult, copied: list[dict[str, Any]]) -> None:
+    lines = [
+        f"# Secret file inventory: {result.image}",
+        "",
+        "Files below were copied from the image filesystem with their original",
+        "relative paths preserved under this folder.",
+        "",
+        f"- copied files: {len(copied)}",
+        f"- findings: {len(result.findings)} ({_severity_line(result.by_severity())})",
+        "",
+    ]
+    if copied:
+        lines += ["## Copied files", "", *_inventory_rows(copied), ""]
+    else:
+        lines += ["## Copied files", "", "No filesystem files were copied for this image.", ""]
+    _write(os.path.join(folder, "INVENTORY.md"), "\n".join(lines) + "\n")
+
+
+def _write_by_image_inventory(base: str, scan: SecretScan) -> None:
+    root = os.path.join(base, "by-image")
+    _makedirs(root)
+    lines = [
+        "# By-image secret file inventory",
+        "",
+        "Each row points at the copied file under `by-image/<image>/`, with the",
+        "image filesystem path preserved wherever it does not collide with report files.",
+        "",
+    ]
+    rows = [
+        "| image | source path | copied to | reason | findings | bytes |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    total = 0
+    for result in scan.results:
+        image_dir = _safe_name(result.image)
+        for path, item in sorted(_source_file_paths(result).items()):
+            source = os.path.join(result.root, path.replace("/", os.sep))
+            if not os.path.isfile(source):
+                continue
+            copied_to = f"{image_dir}/{_copied_relpath(path)}"
+            reasons = "; ".join(item["reasons"]).replace("|", "\\|")
+            size = item["bytes"] or os.path.getsize(source)
+            rows.append(
+                f"| `{result.image}` | `{path}` | `{copied_to}` | {reasons} | "
+                f"{item['findings']} | {size} |"
+            )
+            total += 1
+    lines.append(f"- copied/source files listed: {total}")
+    lines.append("")
+    if total:
+        lines += rows + [""]
+    else:
+        lines += ["No filesystem files were copied yet.", ""]
+    _write(os.path.join(root, "INVENTORY.md"), "\n".join(lines) + "\n")
+
+
 def _write_image_report(base: str, result: ScanResult) -> str:
-    """One folder per image: findings, env, copies of credential files."""
+    """One folder per image: findings, env, direct copies of source files."""
     folder = os.path.join(base, "by-image", _safe_name(result.image))
     _makedirs(folder)
 
@@ -164,34 +325,15 @@ def _write_image_report(base: str, result: ScanResult) -> str:
         lines = [f"{item['name']}={item['value']}" for item in result.env]
         _write(os.path.join(folder, "env.txt"), "\n".join(lines) + "\n")
 
-    # Copy the credential-bearing files themselves. A finding names a line;
-    # responding to it usually means reading what is around that line.
-    copied = 0
-    if result.credential_files:
-        files_dir = os.path.join(folder, "files")
-        _makedirs(files_dir)
-        for item in result.credential_files:
-            # Findings carry forward-slashed paths so reports match across
-            # platforms; turn them back into real paths to copy the files.
-            native = item["path"].replace("/", os.sep)
-            source = os.path.join(result.root, native)
-            target = os.path.join(files_dir, native)
-            try:
-                _makedirs(os.path.dirname(target))
-                shutil.copy2(source, target)
-                os.chmod(target, _FILE_MODE)
-                copied += 1
-            except OSError:
-                # A file that cannot be copied is still reported as a
-                # finding; losing the copy must not lose the report.
-                continue
+    copied = _copy_source_files(folder, result)
+    _write_image_inventory(folder, result, copied)
 
     summary = [
         f"# {result.image}",
         "",
         f"- root: `{result.root}`",
         f"- findings: {len(result.findings)} ({_severity_line(result.by_severity())})",
-        f"- credential files: {len(result.credential_files)} ({copied} copied into `files/`)",
+        f"- copied source files: {len(copied)} (paths preserved under this image folder)",
         "",
     ]
     if result.findings:
@@ -201,6 +343,8 @@ def _write_image_report(base: str, result: ScanResult) -> str:
         for item in result.credential_files:
             summary.append(f"- `{item['path']}` ({item['reason']}, {item['bytes']} bytes)")
         summary.append("")
+    if copied:
+        summary += ["## Copied source files", "", *_inventory_rows(copied), ""]
     summary += ["## Coverage", ""]
     summary += [f"- {line}" for line in result.coverage.lines()]
     if result.errors:
@@ -522,6 +666,7 @@ def write_report(scan: SecretScan, out_dir: str, *, complete: bool = True) -> st
 
     for result in scan.results:
         _write_image_report(base, result)
+    _write_by_image_inventory(base, scan)
     _write_by_type(base, findings)
     _write_unscanned(base, scan)
 
