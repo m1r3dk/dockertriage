@@ -70,3 +70,11 @@ verify.json
 # credentials in plaintext: committing it would publish every key the
 # scanned images leaked. Never version it.
 extracted_secrets/
+
+# The same dump under any other name someone passes to -o, plus the two
+# top-level files write_report leaves beside it. These held real AWS keys,
+# a live Stripe key and production database passwords during development.
+extracted/
+extracted_*/
+/SUMMARY.md
+/UNSCANNED.md

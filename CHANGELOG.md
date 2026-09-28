@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`dt secrets` no longer searches other people's code.** Measured across 89
+  real images, 55% of the 64,599 findings came from `node_modules`,
+  virtualenvs, `site-packages`, npm's `_cacache`, `APKINDEX` and distribution
+  docs. Every one sampled was a library docstring, an npm dist-tag or a
+  package checksum, so nothing in that half could be rotated.
+
+  Those trees are now pruned from the walk and filtered out of engine output.
+  Two new flags control it:
+
+  ```
+    dt secrets output --include-vendor      # search them anyway
+    dt secrets output -x rails/db/seeds     # skip an app-specific data dir too
+  ```
+
+  Skipping quietly would produce the same report as a clean image, so nothing
+  is dropped silently: `coverage.excluded_paths` and
+  `coverage.excluded_findings` count what was set aside and why, the totals
+  reach `UNSCANNED.md` and the terminal summary, and `--include-vendor`
+  restores the old behaviour exactly.
+
+- **`by-type/` is now structured, and deduplicated by secret.** It was the
+  only report folder emitting a bare JSON array, and it listed one row per
+  occurrence: `database.json` held 8,031 rows for 105 distinct credentials,
+  and `other.json` reached 28 MB.
+
+  Each `by-type/<kind>.json` is now an object with `totals`, `rules` and
+  `secrets`, where each secret carries its `occurrences`, `images`,
+  `occurrence_count` and `engines`. A key reused across 66 images is one
+  entry to rotate with 66 places to edit, rather than 66 findings.
+
+  `by-type/index.json` and `by-type/SUMMARY.md` give the size of every bucket
+  without opening it, and four new buckets (`generic-credentials`,
+  `connection-uris`, `cdn-and-edge`, `observability`) split what was
+  previously 83% of all findings sitting in `other`.
+
+### Fixed
+- **A credential on a commented-out line is no longer reported as live.**
+  Measured at 653 findings (3.6%) across the corpus: rotated-out tokens kept
+  in comments. The line is read from the real file rather than guessed, so a
+  comment sitting above working code cannot suppress the code below it.
+- **Widened the placeholder filter.** `admin`, `root`, `wstoken`, `abc12345`
+  and `TESTPURPOSE` passed the old rule and accounted for 612 findings, none
+  of them rotatable.
+- **Multi-line secrets no longer break the `by-type` markdown tables.** PEM
+  private keys were emitted raw, splitting a table row across 1,798
+  characters and several lines. They are now escaped and truncated the same
+  way the per-image reports already did it.
+
 - **Extract only part of an image, and know what was left out.** Container
   images are mostly base OS, so `dt pull --path /app` (repeatable, `-P`) and
   `dt pull --app` (the image's own `WorkingDir`) write just the files you

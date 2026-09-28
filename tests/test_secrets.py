@@ -10,6 +10,7 @@ accounting, and the report layout. Nothing here needs an engine installed.
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -487,6 +488,253 @@ class TestEngineOutputParsing(unittest.TestCase):
         )
         found = secrets._read_leaks_json(raw, "gitleaks", "/img", "i")
         self.assertEqual(found[0].source, "image-config")
+
+
+class TestNoisePaths(unittest.TestCase):
+    """Installed dependencies are somebody else's code.
+
+    Measured over 89 real images: 55% of all findings came from these trees
+    and not one could be rotated. Every case below is a path that actually
+    appeared in that corpus.
+    """
+
+    def test_installed_package_trees_are_recognised(self):
+        for path in (
+            "app/node_modules/pydantic/networks.py",
+            "usr/local/lib/python3.12/site-packages/yt_dlp/x.py",
+            "app/.venv/lib/site-packages/httpx/_urls.py",
+            "usr/lib/python3/dist-packages/mercurial/x.py",
+            "code/authenticate/__pycache__/views.cpython-311.pyc",
+            "usr/local/bundle/ruby/3.4.0/gems/activemodel/x.rb",
+        ):
+            self.assertTrue(secrets.noise_reason(path), path)
+
+    def test_package_caches_are_recognised(self):
+        for path in (
+            "root/.npm/_cacache/content-v2/sha512/9c/f1/b72807",
+            "usr/local/share/.cache/yarn/v6/npm-api-service/x.js",
+            "root/.cache/pip/http-v2/e/5/4/e/a/e54ea1",
+            "rails/tmp/cache/bootsnap/compile-cache-iseq/16/ab57",
+            "var/cache/apk/APKINDEX.9c5ff2cc.tar.gz",
+            "var/lib/dpkg/status",
+        ):
+            self.assertTrue(secrets.noise_reason(path), path)
+
+    def test_application_paths_are_never_noise(self):
+        """The whole point: a real leak must survive the filter."""
+        for path in (
+            "app/.env",
+            "code/dematade/settings.py",
+            "usr/src/app/config/config.js",
+            "app/backend/.env",
+            "code/.git/config",
+            "etc/nginx/goldloan_prod/privatekey.key",
+        ):
+            self.assertEqual(secrets.noise_reason(path), "", path)
+
+    def test_the_reason_says_which_kind_of_noise(self):
+        """A count without a reason cannot be audited."""
+        self.assertIn("npm", secrets.noise_reason("app/node_modules/x/y.js"))
+        self.assertIn("alpine", secrets.noise_reason("var/cache/apk/APKINDEX"))
+
+
+class TestCommentedOutCredentials(unittest.TestCase):
+    """A credential on a disabled line is history, not a live leak.
+
+    Measured at 653 findings (3.6%) across the corpus, almost all of them
+    rotated-out tokens kept in comments "just in case".
+    """
+
+    def test_commented_lines_are_recognised_across_languages(self):
+        for line in (
+            '# EMAIL_HOST_PASSWORD = "kyrjtemjjfciqpwi"',
+            '// const key = "kyrjtemjjfciqpwi"',
+            '  -- password = "kyrjtemjjfciqpwi"',
+            '/* token: "kyrjtemjjfciqpwi" */',
+            '; secret = "kyrjtemjjfciqpwi"',
+        ):
+            self.assertTrue(secrets.is_commented_out(line, "kyrjtemjjfciqpwi"), line)
+
+    def test_live_code_is_never_treated_as_commented(self):
+        self.assertFalse(
+            secrets.is_commented_out('EMAIL_HOST_PASSWORD = "kyrjtemjjfciqpwi"', "kyrjtemjjfciqpwi")
+        )
+
+    def test_a_comment_that_does_not_contain_the_secret_does_not_suppress_it(self):
+        """Otherwise a comment above real code would hide the line below."""
+        self.assertFalse(secrets.is_commented_out("# set the password below", "hunter2"))
+
+
+class TestPlaceholderWidening(unittest.TestCase):
+    """Values that survived the old filter but name nothing rotatable.
+
+    Each of these was measured in the corpus: together they accounted for
+    612 findings, and none was a credential.
+    """
+
+    def test_measured_non_credentials_are_rejected(self):
+        for value in ("TESTPURPOSE", "admin", "root", "wstoken", "abc12345", "localhost"):
+            self.assertTrue(secrets._is_placeholder(value), value)
+
+    def test_real_credentials_still_pass(self):
+        for value in (
+            "RealProdPass123!",
+            "TradeEarth123!",
+            "AKIASVVNNG4FFDEBLH7C",
+            "hf_" + "FakeFixtureValueNotARealKey0123456",
+        ):
+            self.assertFalse(secrets._is_placeholder(value), value)
+
+
+class TestExclusionIsCountedNotSilent(unittest.TestCase):
+    """Skipping quietly produces the same report as a clean image."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="dt-noise-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        os.makedirs(os.path.join(self.root, "app", "node_modules", "pkg"))
+        with open(os.path.join(self.root, "app", "node_modules", "pkg", "doc.js"), "w") as fh:
+            fh.write("// https://user:pass@example.com\n")
+        with open(os.path.join(self.root, "app", ".env"), "w") as fh:
+            fh.write("DB_PASSWORD=RealProdPass123!\n")
+
+    def test_the_vendor_tree_is_not_walked_but_is_counted(self):
+        result = secrets.scan_tree_for_secrets(self.root, engines=[])
+        self.assertTrue(result.coverage.excluded_file_count)
+        self.assertTrue(any("npm" in r for r in result.coverage.excluded_paths))
+
+    def test_the_real_credential_survives(self):
+        result = secrets.scan_tree_for_secrets(self.root, engines=[])
+        self.assertIn("RealProdPass123!", [f.secret for f in result.findings])
+
+    def test_include_vendor_walks_everything(self):
+        result = secrets.scan_tree_for_secrets(self.root, engines=[], include_vendor=True)
+        self.assertEqual(result.coverage.excluded_file_count, 0)
+
+    def test_an_extra_exclude_is_named_in_the_reason(self):
+        result = secrets.scan_tree_for_secrets(self.root, engines=[], extra_excludes=["app"])
+        reasons = " ".join(result.coverage.excluded_paths)
+        self.assertIn("--exclude app", reasons)
+
+    def test_the_counts_reach_the_serialised_coverage(self):
+        result = secrets.scan_tree_for_secrets(self.root, engines=[])
+        data = result.coverage.as_dict()
+        self.assertIn("excluded_file_count", data)
+        self.assertIn("excluded_paths", data)
+
+
+class TestByTypeIsStructured(unittest.TestCase):
+    """The by-type folder is read by people and by tools."""
+
+    def setUp(self):
+        self.out = tempfile.mkdtemp(prefix="dt-bytype-")
+        self.addCleanup(shutil.rmtree, self.out, True)
+        src = tempfile.mkdtemp(prefix="dt-bytype-src-")
+        self.addCleanup(shutil.rmtree, src, True)
+        result = secrets.ScanResult(image="example/app:1.0", root=src)
+        # The same key in three images: one thing to rotate, three to edit.
+        result.findings = [
+            secrets.Finding(
+                rule="aws-access-token",
+                description="AWS key",
+                severity="critical",
+                secret="AKIAVCGVLWYN232F6F4A",
+                path=f"code/app{n}/views.py",
+                line=10 + n,
+                image=f"example/app{n}:1.0",
+                engine="gitleaks",
+            )
+            for n in range(3)
+        ]
+        result.findings.append(
+            secrets.Finding(
+                rule="AWS",
+                description="AWS key in a package fixture",
+                severity="high",
+                secret="AKIAI6KIQRRVMGK3WK5Q",
+                path="app/node_modules/request/tests/test-s3.js",
+                line=5,
+                image="example/app0:1.0",
+                engine="trufflehog",
+            )
+        )
+        self.scan = secrets.SecretScan(results=[result])
+        self.base = secretreport.write_report(self.scan, self.out)
+
+    def _json(self, *parts):
+        with open(os.path.join(self.base, *parts), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_the_bucket_file_is_an_object_not_a_bare_array(self):
+        """Every other report file is an object; this one was not."""
+        data = self._json("by-type", "aws.json")
+        self.assertIsInstance(data, dict)
+        self.assertEqual(data["kind"], "aws")
+        self.assertIn("totals", data)
+        self.assertIn("secrets", data)
+
+    def test_one_secret_in_three_images_is_one_entry(self):
+        data = self._json("by-type", "aws.json")
+        self.assertEqual(data["totals"]["findings"], 4)
+        self.assertEqual(data["totals"]["unique_secrets"], 2)
+        widespread = next(g for g in data["secrets"] if g["secret"] == "AKIAVCGVLWYN232F6F4A")
+        self.assertEqual(widespread["occurrence_count"], 3)
+        self.assertEqual(len(widespread["images"]), 3)
+
+    def test_every_occurrence_is_kept_so_each_site_can_be_fixed(self):
+        data = self._json("by-type", "aws.json")
+        widespread = next(g for g in data["secrets"] if g["secret"] == "AKIAVCGVLWYN232F6F4A")
+        self.assertEqual(len(widespread["occurrences"]), 3)
+        self.assertTrue(all(o["line"] for o in widespread["occurrences"]))
+
+    def test_a_secret_only_inside_a_package_is_flagged_vendor(self):
+        data = self._json("by-type", "aws.json")
+        fixture = next(g for g in data["secrets"] if g["secret"] == "AKIAI6KIQRRVMGK3WK5Q")
+        self.assertTrue(fixture["vendor"])
+        app = next(g for g in data["secrets"] if g["secret"] == "AKIAVCGVLWYN232F6F4A")
+        self.assertFalse(app["vendor"])
+
+    def test_an_index_gives_bucket_sizes_without_opening_them(self):
+        index = self._json("by-type", "index.json")
+        self.assertIn("totals", index)
+        kinds = {k["kind"]: k for k in index["kinds"]}
+        self.assertEqual(kinds["aws"]["unique_secrets"], 2)
+        self.assertEqual(kinds["aws"]["json"], "aws.json")
+
+    def test_the_by_type_summary_is_a_table_a_person_can_read(self):
+        with open(os.path.join(self.base, "by-type", "SUMMARY.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("unique secrets", text)
+        self.assertIn("aws", text)
+
+    def test_secrets_are_still_written_in_the_clear(self):
+        """Dedup must not become redaction."""
+        with open(os.path.join(self.base, "by-type", "aws.md"), encoding="utf-8") as fh:
+            self.assertIn("AKIAVCGVLWYN232F6F4A", fh.read())
+
+    def test_a_multiline_secret_cannot_break_the_table(self):
+        """Private keys are multi-line and would split a markdown row."""
+        rows = secretreport._secret_rows(
+            [
+                {
+                    "secret": "-----BEGIN PRIVATE KEY-----\nMIIEvg|IBADAN",
+                    "rule": "private-key",
+                    "severity": "critical",
+                    "engines": ["gitleaks"],
+                    "verified": None,
+                    "occurrence_count": 1,
+                    "images": ["x"],
+                    "occurrences": [{"image": "x", "path": "a.pem", "line": 1, "vendor": False}],
+                }
+            ]
+        )
+        body = rows[2]
+        # A newline would end the row early; an unescaped pipe would add a
+        # column. Both would silently corrupt every row after this one.
+        self.assertNotIn("\n", body)
+        self.assertIn("\\|", body)
+        delimiters = len(re.findall(r"(?<!\\)\|", body))
+        self.assertEqual(delimiters, 8)
 
 
 if __name__ == "__main__":

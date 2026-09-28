@@ -31,6 +31,10 @@ _FILE_MODE = 0o600
 
 # Findings are grouped into these buckets so a responder can rotate one class
 # of credential at a time. Matched against the rule id, in order.
+#
+# The generic buckets exist because the engines emit them in bulk: over 89
+# images, `generic-api-key`, `URI` and `generic-password` alone were 46,000
+# findings. Left in "other" they hid every named provider behind them.
 _KIND_RULES = (
     ("aws", ("aws",)),
     ("gcp", ("gcp", "google", "service-account", "service_account")),
@@ -44,7 +48,40 @@ _KIND_RULES = (
     ("ai-provider", ("openai", "anthropic", "huggingface", "cohere")),
     ("jwt-and-sessions", ("jwt", "session", "cookie")),
     ("named-variables", ("named-secret-variable",)),
+    ("cdn-and-edge", ("cloudflare", "fastly", "akamai", "cloudfront")),
+    ("observability", ("datadog", "sentry", "sonar", "airbrake", "newrelic", "sumologic")),
+    ("connection-uris", ("uri", "url", "ftp", "connection")),
+    ("generic-credentials", ("generic", "curl-auth", "basic-auth")),
 )
+
+# Path fragments that mark a finding as somebody else's code. Kept here as
+# well as in the scanner because a report may be written from findings that
+# were collected with `--include-vendor`, and a reader still wants them
+# separated from the application's own leaks.
+_VENDOR_HINTS = (
+    "node_modules/",
+    "site-packages/",
+    "dist-packages/",
+    "__pycache__/",
+    ".venv/",
+    "/venv/",
+    "vendor/",
+    "_cacache/",
+    ".cache/",
+    "bootsnap",
+    "var/cache/",
+    "var/lib/",
+    "usr/share/doc/",
+    "usr/share/man/",
+    "APKINDEX",
+    "ms-playwright/",
+)
+
+
+def _is_vendor_path(path: str) -> bool:
+    """True when a finding comes from installed code rather than the app."""
+    posix = path.replace(os.sep, "/")
+    return any(hint in posix for hint in _VENDOR_HINTS)
 
 
 def _kind_of(finding: Finding) -> str:
@@ -171,8 +208,93 @@ def _write_image_report(base: str, result: ScanResult) -> str:
     return folder
 
 
+def _group_by_secret(findings: list[Finding]) -> list[dict[str, Any]]:
+    """Collapse findings to one entry per distinct secret.
+
+    The same credential in 66 images is one thing to rotate, not 66. The
+    places it appears become `occurrences`, because a responder still has to
+    visit every one of them to remove it.
+    """
+    groups: dict[str, list[Finding]] = {}
+    for f in findings:
+        groups.setdefault(f.secret, []).append(f)
+
+    out: list[dict[str, Any]] = []
+    for secret, items in groups.items():
+        best = min(items, key=lambda f: SEVERITY_ORDER.get(f.severity, 9))
+        engines: set[str] = set()
+        for f in items:
+            engines.update(f.engine.split("+"))
+        occurrences = [
+            {
+                "image": f.image,
+                "path": f.path,
+                "line": f.line,
+                "source": f.source,
+                "vendor": _is_vendor_path(f.path),
+            }
+            for f in sorted(items, key=lambda f: (f.image, f.path, f.line))
+        ]
+        out.append(
+            {
+                "secret": secret,
+                "rule": best.rule,
+                "description": best.description,
+                "severity": best.severity,
+                "engines": sorted(engines),
+                "verified": any(f.verified for f in items) or None,
+                # A secret found only inside installed packages is almost
+                # always the package author's example, not this image's leak.
+                "vendor": all(o["vendor"] for o in occurrences),
+                "occurrence_count": len(items),
+                "images": sorted({f.image for f in items if f.image}),
+                "occurrences": occurrences,
+            }
+        )
+
+    # Worst first, then the most widespread, because a key in 66 images is a
+    # bigger job than the same severity in one.
+    out.sort(
+        key=lambda g: (
+            SEVERITY_ORDER.get(g["severity"], 9),
+            bool(g["vendor"]),
+            -g["occurrence_count"],
+            g["secret"],
+        )
+    )
+    return out
+
+
+def _secret_rows(groups: list[dict[str, Any]]) -> list[str]:
+    """A markdown table of deduplicated secrets, values included."""
+    rows = [
+        "| severity | secret | rule | engines | occurrences | images | first seen |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for g in groups:
+        secret = str(g["secret"]).replace("|", "\\|").replace("`", "'")
+        secret = secret.replace("\n", " ").replace("\r", " ")
+        if len(secret) > 120:
+            secret = secret[:117] + "..."
+        first = g["occurrences"][0]
+        where = f"{first['image']}: {first['path']}" if first["image"] else first["path"]
+        if first["line"]:
+            where += f":{first['line']}"
+        verified = " (verified live)" if g["verified"] else ""
+        rows.append(
+            f"| {g['severity']} | `{secret}` | {g['rule']}{verified} | "
+            f"{', '.join(g['engines'])} | {g['occurrence_count']} | "
+            f"{len(g['images'])} | {where} |"
+        )
+    return rows
+
+
 def _write_by_type(base: str, findings: list[Finding]) -> None:
-    """Group every finding by credential kind, for bulk rotation."""
+    """Group every finding by credential kind, for bulk rotation.
+
+    One file per kind, deduplicated by secret, plus an index so the size of
+    each bucket can be read without opening a 28 MB file.
+    """
     buckets: dict[str, list[Finding]] = {}
     for f in findings:
         buckets.setdefault(_kind_of(f), []).append(f)
@@ -180,17 +302,114 @@ def _write_by_type(base: str, findings: list[Finding]) -> None:
         return
     root = os.path.join(base, "by-type")
     _makedirs(root)
+
+    index: list[dict[str, Any]] = []
     for kind, items in sorted(buckets.items()):
-        items.sort(key=lambda f: (SEVERITY_ORDER.get(f.severity, 9), f.image, f.path))
-        _write(
-            os.path.join(root, f"{kind}.json"),
-            json.dumps([f.as_dict() for f in items], indent=2),
-        )
-        lines = [f"# {kind}", "", f"{len(items)} findings.", ""]
+        groups = _group_by_secret(items)
+        app_groups = [g for g in groups if not g["vendor"]]
+        vendor_groups = [g for g in groups if g["vendor"]]
+
+        severity: dict[str, int] = {}
         for f in items:
-            where = f"{f.image}: {f.path}" + (f":{f.line}" if f.line else "")
-            lines.append(f"- `{f.secret}`  ({where})")
+            severity[f.severity] = severity.get(f.severity, 0) + 1
+        rules: dict[str, set[str]] = {}
+        for f in items:
+            rules.setdefault(f.rule, set()).add(f.secret)
+        rule_rows = sorted(
+            ({"rule": r, "unique_secrets": len(s)} for r, s in rules.items()),
+            key=lambda d: (-int(d["unique_secrets"]), str(d["rule"])),
+        )
+
+        totals = {
+            "findings": len(items),
+            "unique_secrets": len(groups),
+            "images": len({f.image for f in items if f.image}),
+            "by_severity": severity,
+            "vendor_only_secrets": len(vendor_groups),
+        }
+        payload = {
+            "kind": kind,
+            "totals": totals,
+            "rules": rule_rows,
+            "secrets": groups,
+        }
+        _write(os.path.join(root, f"{kind}.json"), json.dumps(payload, indent=2))
+
+        lines = [
+            f"# {kind}",
+            "",
+            f"{len(groups)} unique secrets across {len(items)} findings "
+            f"in {totals['images']} images.",
+            f"Severity: {_severity_line(severity)}.",
+            "",
+            "## Rules",
+            "",
+            "| rule | unique secrets |",
+            "| --- | --- |",
+        ]
+        lines += [f"| {r['rule']} | {r['unique_secrets']} |" for r in rule_rows]
+        lines.append("")
+        if app_groups:
+            lines += ["## Secrets", "", *_secret_rows(app_groups), ""]
+        if vendor_groups:
+            lines += [
+                "## Vendor-path only",
+                "",
+                "Every occurrence is inside installed packages or caches, so these",
+                "are usually the package author's examples rather than this image's",
+                "leak. Checked before dismissing, never deleted silently.",
+                "",
+                *_secret_rows(vendor_groups),
+                "",
+            ]
         _write(os.path.join(root, f"{kind}.md"), "\n".join(lines) + "\n")
+
+        index.append(
+            {
+                "kind": kind,
+                **totals,
+                "json": f"{kind}.json",
+                "markdown": f"{kind}.md",
+            }
+        )
+
+    index.sort(key=lambda d: -int(d["unique_secrets"]))
+    all_secrets = {f.secret for f in findings}
+    _write(
+        os.path.join(root, "index.json"),
+        json.dumps(
+            {
+                "totals": {
+                    "findings": len(findings),
+                    "unique_secrets": len(all_secrets),
+                    "kinds": len(index),
+                    "images": len({f.image for f in findings if f.image}),
+                },
+                "kinds": index,
+            },
+            indent=2,
+        ),
+    )
+
+    summary = [
+        "# Findings by credential type",
+        "",
+        f"{len(all_secrets)} unique secrets across {len(findings)} findings.",
+        "Rotate by reading one file per row: the unique-secret count is the",
+        "size of the job, the finding count is how many places to edit.",
+        "",
+        "| kind | unique secrets | findings | images | critical | high | vendor-only |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in index:
+        sev = row["by_severity"]
+        summary.append(
+            f"| [{row['kind']}]({row['markdown']}) | {row['unique_secrets']} | "
+            f"{row['findings']} | {row['images']} | {sev.get('critical', 0)} | "
+            f"{sev.get('high', 0)} | {row['vendor_only_secrets']} |"
+        )
+    summary.append("")
+    _write(os.path.join(root, "SUMMARY.md"), "\n".join(summary) + "\n")
 
 
 def _write_unscanned(base: str, scan: SecretScan) -> None:
@@ -227,6 +446,35 @@ def _write_unscanned(base: str, scan: SecretScan) -> None:
         ]
         lines += [f"- `{item['path']}` - {item['reason']}" for item in cov.unscanned]
         lines.append("")
+    if cov.excluded_file_count or cov.excluded_finding_count:
+        lines += [
+            "## Third-party trees, deliberately not searched",
+            "",
+            "Installed dependencies and package caches are somebody else's",
+            "code. Measured over 89 images they produced 55% of all findings",
+            "and not one that could be rotated: library docstrings, npm",
+            "registry metadata, distribution checksums.",
+            "",
+            f"- {cov.excluded_file_count} paths pruned from the walk",
+            f"- {cov.excluded_finding_count} engine findings dropped",
+            "",
+            "Re-run with `--include-vendor` to search them anyway.",
+            "",
+        ]
+        if cov.excluded_paths:
+            lines += ["By kind:", ""]
+            lines += [
+                f"- `{reason}`: {count} paths"
+                for reason, count in sorted(cov.excluded_paths.items(), key=lambda kv: -kv[1])
+            ]
+            lines.append("")
+        if cov.excluded_findings:
+            lines += ["Findings dropped by reason:", ""]
+            lines += [
+                f"- `{reason}`: {count}"
+                for reason, count in sorted(cov.excluded_findings.items(), key=lambda kv: -kv[1])
+            ]
+            lines.append("")
     if cov.complete:
         lines += ["Every engine ran and no path was skipped.", ""]
     _write(os.path.join(base, "UNSCANNED.md"), "\n".join(lines) + "\n")
@@ -270,7 +518,8 @@ def write_report(scan: SecretScan, out_dir: str) -> str:
     if scan.affected:
         lines.append("- `by-image/<image>/` - per image, with copies of the offending files")
     if findings:
-        lines.append("- `by-type/` - grouped by credential kind, for bulk rotation")
+        lines.append("- `by-type/SUMMARY.md` - one row per credential kind, start here")
+        lines.append("- `by-type/<kind>.json` - deduplicated by secret, with every occurrence")
     lines.append("- `UNSCANNED.md` - what nothing looked at, and why")
     lines.append("")
 
@@ -324,6 +573,11 @@ def summary_lines(scan: SecretScan, out_dir: str) -> list[str]:
         out.append(f"not installed, so their rules never ran: {', '.join(cov.engines_missing)}")
     if cov.unscanned:
         out.append(f"{len(cov.unscanned)} paths unscanned, listed in UNSCANNED.md")
+    if cov.excluded_finding_count:
+        out.append(
+            f"{cov.excluded_finding_count} findings in third-party trees set aside "
+            f"(--include-vendor to keep them)"
+        )
     out.append(f"written to {os.path.abspath(out_dir)}")
     return out
 
