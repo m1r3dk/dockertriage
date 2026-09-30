@@ -16,9 +16,10 @@ import json
 import os
 import re
 import shutil
+from collections import Counter
 from typing import Any
 
-from .secrets import SEVERITY_ORDER, Finding, ScanResult, SecretScan
+from .secrets import SEVERITY_ORDER, Finding, ScanResult, SecretScan, noise_reason
 
 # Created in the working directory unless -o says otherwise, so a scan never
 # writes into the image being scanned.
@@ -53,34 +54,14 @@ _KIND_RULES = (
     ("generic-credentials", ("generic", "curl-auth", "basic-auth")),
 )
 
-# Path fragments that mark a finding as somebody else's code. Kept here as
-# well as in the scanner because a report may be written from findings that
-# were collected with `--include-vendor`, and a reader still wants them
-# separated from the application's own leaks.
-_VENDOR_HINTS = (
-    "node_modules/",
-    "site-packages/",
-    "dist-packages/",
-    "__pycache__/",
-    ".venv/",
-    "/venv/",
-    "vendor/",
-    "_cacache/",
-    ".cache/",
-    "bootsnap",
-    "var/cache/",
-    "var/lib/",
-    "usr/share/doc/",
-    "usr/share/man/",
-    "APKINDEX",
-    "ms-playwright/",
-)
-
 
 def _is_vendor_path(path: str) -> bool:
-    """True when a finding comes from installed code rather than the app."""
-    posix = path.replace(os.sep, "/")
-    return any(hint in posix for hint in _VENDOR_HINTS)
+    """True when a finding comes from installed code rather than the app.
+
+    The same rule the scanner prunes by, so a report written from an
+    `--include-vendor` scan still separates somebody else's code.
+    """
+    return bool(noise_reason(path))
 
 
 def _kind_of(finding: Finding) -> str:
@@ -236,15 +217,19 @@ def _copy_source_files(folder: str, result: ScanResult) -> list[dict[str, Any]]:
     return copied
 
 
-def _inventory_rows(items: list[dict[str, Any]]) -> list[str]:
+def _inventory_rows(items: list[dict[str, Any]], image: str = "") -> list[str]:
+    """Markdown rows for copied files; `image` adds a leading image column."""
+    lead, rule = ("| image ", "| --- ") if image else ("", "")
     rows = [
-        "| source path | copied to | reason | findings | bytes |",
-        "| --- | --- | --- | --- | --- |",
+        f"{lead}| source path | copied to | reason | findings | bytes |",
+        f"{rule}| --- | --- | --- | --- | --- |",
     ]
+    prefix = f"{_safe_name(image)}/" if image else ""
+    cell = f"| `{image}` " if image else ""
     for item in items:
         reasons = "; ".join(item["reasons"]).replace("|", "\\|")
         rows.append(
-            f"| `{item['path']}` | `{item['copied_to']}` | {reasons} | "
+            f"{cell}| `{item['path']}` | `{prefix}{item['copied_to']}` | {reasons} | "
             f"{item['findings']} | {item['bytes']} |"
         )
     return rows
@@ -268,46 +253,35 @@ def _write_image_inventory(folder: str, result: ScanResult, copied: list[dict[st
     _write(os.path.join(folder, "INVENTORY.md"), "\n".join(lines) + "\n")
 
 
-def _write_by_image_inventory(base: str, scan: SecretScan) -> None:
+def _write_by_image_inventory(base: str, copies: list[tuple[str, list[dict[str, Any]]]]) -> None:
+    """One index over every image's copied files, from what was really copied."""
     root = os.path.join(base, "by-image")
     _makedirs(root)
+    total = sum(len(copied) for _, copied in copies)
     lines = [
         "# By-image secret file inventory",
         "",
         "Each row points at the copied file under `by-image/<image>/`, with the",
         "image filesystem path preserved wherever it does not collide with report files.",
         "",
+        f"- copied/source files listed: {total}",
+        "",
     ]
-    rows = [
-        "| image | source path | copied to | reason | findings | bytes |",
-        "| --- | --- | --- | --- | --- | --- |",
-    ]
-    total = 0
-    for result in scan.results:
-        image_dir = _safe_name(result.image)
-        for path, item in sorted(_source_file_paths(result).items()):
-            source = os.path.join(result.root, path.replace("/", os.sep))
-            if not os.path.isfile(source):
-                continue
-            copied_to = f"{image_dir}/{_copied_relpath(path)}"
-            reasons = "; ".join(item["reasons"]).replace("|", "\\|")
-            size = item["bytes"] or os.path.getsize(source)
-            rows.append(
-                f"| `{result.image}` | `{path}` | `{copied_to}` | {reasons} | "
-                f"{item['findings']} | {size} |"
-            )
-            total += 1
-    lines.append(f"- copied/source files listed: {total}")
-    lines.append("")
     if total:
-        lines += rows + [""]
+        lines += _inventory_rows([], image="-")
+        for image, copied in copies:
+            lines += _inventory_rows(copied, image)[2:]
+        lines.append("")
     else:
         lines += ["No filesystem files were copied yet.", ""]
     _write(os.path.join(root, "INVENTORY.md"), "\n".join(lines) + "\n")
 
 
-def _write_image_report(base: str, result: ScanResult) -> str:
-    """One folder per image: findings, env, direct copies of source files."""
+def _write_image_report(base: str, result: ScanResult) -> list[dict[str, Any]]:
+    """One folder per image: findings, env, direct copies of source files.
+
+    Returns what was copied, so the top-level inventory need not recompute it.
+    """
     folder = os.path.join(base, "by-image", _safe_name(result.image))
     _makedirs(folder)
 
@@ -348,7 +322,7 @@ def _write_image_report(base: str, result: ScanResult) -> str:
     if result.errors:
         summary += ["", "## Errors", ""] + [f"- {e}" for e in result.errors]
     _write(os.path.join(folder, "SUMMARY.md"), "\n".join(summary) + "\n")
-    return folder
+    return copied
 
 
 # A credential URI carries the secret plus whatever host it pointed at. One
@@ -479,16 +453,14 @@ def _write_by_type(base: str, findings: list[Finding]) -> None:
         app_groups = [g for g in groups if not g["vendor"]]
         vendor_groups = [g for g in groups if g["vendor"]]
 
-        severity: dict[str, int] = {}
-        for f in items:
-            severity[f.severity] = severity.get(f.severity, 0) + 1
+        severity = dict(Counter(f.severity for f in items))
         rules: dict[str, set[str]] = {}
         for f in items:
             rules.setdefault(f.rule, set()).add(f.secret)
-        rule_rows = sorted(
-            ({"rule": r, "unique_secrets": len(s)} for r, s in rules.items()),
-            key=lambda d: (-int(d["unique_secrets"]), str(d["rule"])),
-        )
+        rule_rows = [
+            {"rule": r, "unique_secrets": len(s)}
+            for r, s in sorted(rules.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        ]
 
         totals = {
             "findings": len(items),
@@ -634,15 +606,13 @@ def _write_unscanned(base: str, scan: SecretScan) -> None:
         if cov.excluded_paths:
             lines += ["By kind:", ""]
             lines += [
-                f"- `{reason}`: {count} paths"
-                for reason, count in sorted(cov.excluded_paths.items(), key=lambda kv: -kv[1])
+                f"- `{reason}`: {count} paths" for reason, count in cov.excluded_paths.most_common()
             ]
             lines.append("")
         if cov.excluded_findings:
             lines += ["Findings dropped by reason:", ""]
             lines += [
-                f"- `{reason}`: {count}"
-                for reason, count in sorted(cov.excluded_findings.items(), key=lambda kv: -kv[1])
+                f"- `{reason}`: {count}" for reason, count in cov.excluded_findings.most_common()
             ]
             lines.append("")
     if cov.complete:
@@ -662,9 +632,8 @@ def write_report(scan: SecretScan, out_dir: str, *, complete: bool = True) -> st
 
     _write(os.path.join(base, "findings.json"), json.dumps(scan.as_dict(), indent=2))
 
-    for result in scan.results:
-        _write_image_report(base, result)
-    _write_by_image_inventory(base, scan)
+    copies = [(r.image, _write_image_report(base, r)) for r in scan.results]
+    _write_by_image_inventory(base, copies)
     _write_by_type(base, findings)
     _write_unscanned(base, scan)
 
@@ -706,11 +675,8 @@ def write_report(scan: SecretScan, out_dir: str, *, complete: bool = True) -> st
                 *_finding_rows(worst),
                 "",
             ]
-        by_image: dict[str, int] = {}
-        for f in findings:
-            by_image[f.image] = by_image.get(f.image, 0) + 1
         lines += ["## Findings per image", ""]
-        for image, count in sorted(by_image.items(), key=lambda kv: -kv[1]):
+        for image, count in Counter(f.image for f in findings).most_common():
             lines.append(f"- {image}: {count}")
         lines.append("")
     elif complete:

@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
@@ -131,8 +132,8 @@ class ScanCoverage:
     # Third-party trees deliberately not searched, counted by kind. A count
     # rather than a path list: there are tens of thousands of them, and what
     # a reader needs is the scale of what was set aside, not its inventory.
-    excluded_paths: dict[str, int] = dataclasses.field(default_factory=dict)
-    excluded_findings: dict[str, int] = dataclasses.field(default_factory=dict)
+    excluded_paths: Counter[str] = dataclasses.field(default_factory=Counter)
+    excluded_findings: Counter[str] = dataclasses.field(default_factory=Counter)
 
     # Enough to act on without turning the report into a second filesystem.
     _MAX_NAMED = 500
@@ -143,19 +144,19 @@ class ScanCoverage:
 
     def note_excluded_path(self, reason: str) -> None:
         """One more file skipped because it belongs to somebody else."""
-        self.excluded_paths[reason] = self.excluded_paths.get(reason, 0) + 1
+        self.excluded_paths[reason] += 1
 
     def note_excluded_finding(self, reason: str) -> None:
         """One more engine finding dropped because of where it came from."""
-        self.excluded_findings[reason] = self.excluded_findings.get(reason, 0) + 1
+        self.excluded_findings[reason] += 1
 
     @property
     def excluded_file_count(self) -> int:
-        return sum(self.excluded_paths.values())
+        return self.excluded_paths.total()
 
     @property
     def excluded_finding_count(self) -> int:
-        return sum(self.excluded_findings.values())
+        return self.excluded_findings.total()
 
     @property
     def complete(self) -> bool:
@@ -165,24 +166,15 @@ class ScanCoverage:
     def merge(self, other: ScanCoverage) -> None:
         self.files_seen += other.files_seen
         self.bytes_seen += other.bytes_seen
-        for name in other.engines_run:
-            if name not in self.engines_run:
-                self.engines_run.append(name)
-        for name in other.engines_missing:
-            if name not in self.engines_missing:
-                self.engines_missing.append(name)
-        for item in other.engines_failed:
-            if item not in self.engines_failed:
-                self.engines_failed.append(item)
+        self.engines_run = list(dict.fromkeys(self.engines_run + other.engines_run))
+        self.engines_missing = list(dict.fromkeys(self.engines_missing + other.engines_missing))
+        self.notes = list(dict.fromkeys(self.notes + other.notes))
+        # dicts are unhashable, so these dedupe by comparison instead.
+        self.engines_failed += [f for f in other.engines_failed if f not in self.engines_failed]
         for item in other.unscanned:
             self.note_unscanned(item["path"], item["reason"])
-        for reason, count in other.excluded_paths.items():
-            self.excluded_paths[reason] = self.excluded_paths.get(reason, 0) + count
-        for reason, count in other.excluded_findings.items():
-            self.excluded_findings[reason] = self.excluded_findings.get(reason, 0) + count
-        for note in other.notes:
-            if note not in self.notes:
-                self.notes.append(note)
+        self.excluded_paths.update(other.excluded_paths)
+        self.excluded_findings.update(other.excluded_findings)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -215,8 +207,7 @@ class ScanCoverage:
             out.append(f"{len(self.unscanned)} paths recorded as unscanned")
         if self.excluded_file_count:
             kinds = ", ".join(
-                f"{reason} ({count})"
-                for reason, count in sorted(self.excluded_paths.items(), key=lambda kv: -kv[1])[:6]
+                f"{reason} ({count})" for reason, count in self.excluded_paths.most_common(6)
             )
             out.append(
                 f"{self.excluded_file_count} files in third-party trees were not searched: {kinds}"
@@ -243,10 +234,7 @@ class ScanResult:
     errors: list[str] = dataclasses.field(default_factory=list)
 
     def by_severity(self) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for f in self.findings:
-            counts[f.severity] = counts.get(f.severity, 0) + 1
-        return counts
+        return dict(Counter(f.severity for f in self.findings))
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -832,18 +820,14 @@ _VENDOR_DIRS = {
     "vendor": "vendored dependency tree",
     "gems": "installed ruby gem",
     "bundle": "installed ruby bundle",
-    "pkg/mod": "go module cache",
     ".cargo": "rust crate cache",
     ".nuget": "nuget package cache",
     ".m2": "maven repository",
     ".gradle": "gradle cache",
     "ms-playwright": "playwright browser bundle",
     "site_perl": "installed perl module",
-}
-
-# Package-manager and build caches. Content-addressed blobs and compiled
-# artefacts: high entropy by construction, so every engine lights up.
-_CACHE_DIRS = {
+    # Package-manager and build caches. Content-addressed blobs and compiled
+    # artefacts: high entropy by construction, so every engine lights up.
     "_cacache": "npm content-addressed cache",
     ".npm": "npm cache",
     "bootsnap": "bootsnap compile cache",
@@ -929,14 +913,14 @@ def noise_reason(relpath: str) -> str:
 def _noise_reason_for(posix: str) -> str:
     parts = posix.split("/")
     for part in parts:
-        reason = _VENDOR_DIRS.get(part) or _CACHE_DIRS.get(part)
+        reason = _VENDOR_DIRS.get(part)
         if reason:
             return reason
     lowered = posix.lower()
     for fragment, reason in _NOISE_FRAGMENTS:
         if fragment.lower() in lowered:
             return reason
-    # `pkg/mod` is two segments, so it cannot be matched above.
+    # `pkg/mod` is two segments, so a per-segment lookup cannot match it.
     if "/pkg/mod/" in f"/{posix}/":
         return "go module cache"
     return ""
@@ -1114,7 +1098,7 @@ def scan_tree_for_secrets(
     # Decided before the walk, because it changes what the walk records about
     # archives: betterleaks reads inside them, so calling them unexamined
     # when it is running would understate coverage.
-    planned, _ = select_engines(engines if engines is not None else ENGINES)
+    planned, superseded = select_engines(engines if engines is not None else ENGINES)
     archives_covered = any(e.name == "betterleaks" and e.available() for e in planned)
 
     def excluded_because(rel: str) -> str:
@@ -1173,17 +1157,15 @@ def scan_tree_for_secrets(
         name = os.path.basename(rel).lower()
         if (
             name.startswith(".env")
-            or name in {".envrc", ".npmrc", ".netrc"}
+            or name in {".npmrc", ".netrc"}
             or why.endswith("environment file")
         ):
             collected.extend(_scan_env_file(absolute, rel, result.image))
 
     # The engines. Absence is recorded rather than tolerated silently: an
     # uninstalled scanner and a clean image produce the same empty list.
-    selected = engines if engines is not None else ENGINES
-    selected, superseded = select_engines(selected)
     cov.notes.extend(superseded)
-    for engine in selected:
+    for engine in planned:
         if not engine.available():
             cov.engines_missing.append(engine.name)
             continue
@@ -1320,10 +1302,7 @@ class SecretScan:
         return out
 
     def by_severity(self) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for f in self.findings:
-            counts[f.severity] = counts.get(f.severity, 0) + 1
-        return counts
+        return dict(Counter(f.severity for f in self.findings))
 
     def coverage(self) -> ScanCoverage:
         total = ScanCoverage()
