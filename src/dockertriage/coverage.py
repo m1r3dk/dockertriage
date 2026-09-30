@@ -22,7 +22,8 @@ import posixpath
 import shlex
 from typing import Any
 
-from .humanize import build_step
+# Trailing buildkit marker on modern history entries: "COPY x y # buildkit".
+_BUILDKIT_SUFFIX = "# buildkit"
 
 
 @dataclasses.dataclass(slots=True)
@@ -54,20 +55,24 @@ def working_dir(config: dict[str, Any]) -> str:
     return "" if value in ("", "/") else value
 
 
-def _destination_from(args_text: str) -> str:
-    """Pull the destination out of a COPY/ADD step's arguments.
+def _destination_from(command: str) -> str:
+    """Pull the destination argument out of one COPY/ADD command string.
 
     Docker writes history as `COPY <src>... <dest>`, so the destination is the
-    final argument. Flags like `--from=builder` are dropped first so they
-    cannot be mistaken for it.
+    final argument. Flags like `--from=builder` and the buildkit marker are
+    dropped first so they cannot be mistaken for it.
     """
+    text = command.strip()
+    if text.endswith(_BUILDKIT_SUFFIX):
+        text = text[: -len(_BUILDKIT_SUFFIX)].strip()
     try:
         # posix=False keeps Windows-style paths intact; shlex still splits on
         # whitespace and respects quoting, which naive .split() would not.
-        parts = shlex.split(args_text, posix=False)
+        parts = shlex.split(text, posix=False)
     except ValueError:
-        parts = args_text.split()
-    args = [p for p in parts if not p.startswith("--")]
+        parts = text.split()
+    # Drop the verb and any --flags, leaving the source/destination arguments.
+    args = [p for p in parts[1:] if not p.startswith("--")]
     if len(args) < 2:
         # A one-argument form has no explicit destination to check.
         return ""
@@ -78,11 +83,15 @@ def copy_destinations(layer_commands: list[str]) -> list[CopyDestination]:
     """Every COPY/ADD destination recorded in the image history, in order."""
     found: list[CopyDestination] = []
     for index, command in enumerate(layer_commands):
-        verb, args_text = build_step(command)
-        if verb in ("COPY", "ADD"):
-            dest = _destination_from(args_text)
+        text = (command or "").strip()
+        upper = text.upper()
+        for verb in ("COPY", "ADD"):
+            if not upper.startswith(verb + " "):
+                continue
+            dest = _destination_from(text)
             if dest:
-                found.append(CopyDestination(index, verb, dest, (command or "").strip()))
+                found.append(CopyDestination(index, verb, dest, text))
+            break
     return found
 
 

@@ -19,7 +19,7 @@ import shutil
 from collections import Counter
 from typing import Any
 
-from .secrets import SEVERITY_ORDER, Finding, ScanResult, SecretScan, noise_reason
+from .secrets import SEVERITY_ORDER, Finding, ScanResult, SecretScan
 
 # Created in the working directory unless -o says otherwise, so a scan never
 # writes into the image being scanned.
@@ -55,13 +55,36 @@ _KIND_RULES = (
 )
 
 
-def _is_vendor_path(path: str) -> bool:
-    """True when a finding comes from installed code rather than the app.
+# Path fragments that mark a finding as somebody else's code. Kept here as
+# well as in the scanner because a report may be written from findings that
+# were collected with `--include-vendor`, and a reader still wants them
+# separated from the application's own leaks. Deliberately broader than the
+# scanner's pruning rule (any `var/lib/` or `.cache/`): marking a finding
+# vendor only demotes it in the report, where pruning would hide it.
+_VENDOR_HINTS = (
+    "node_modules/",
+    "site-packages/",
+    "dist-packages/",
+    "__pycache__/",
+    ".venv/",
+    "/venv/",
+    "vendor/",
+    "_cacache/",
+    ".cache/",
+    "bootsnap",
+    "var/cache/",
+    "var/lib/",
+    "usr/share/doc/",
+    "usr/share/man/",
+    "APKINDEX",
+    "ms-playwright/",
+)
 
-    The same rule the scanner prunes by, so a report written from an
-    `--include-vendor` scan still separates somebody else's code.
-    """
-    return bool(noise_reason(path))
+
+def _is_vendor_path(path: str) -> bool:
+    """True when a finding comes from installed code rather than the app."""
+    posix = path.replace(os.sep, "/")
+    return any(hint in posix for hint in _VENDOR_HINTS)
 
 
 def _kind_of(finding: Finding) -> str:
