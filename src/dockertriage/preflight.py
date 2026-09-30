@@ -16,7 +16,6 @@ the remaining count by zero.
 
 import dataclasses
 import http.client
-import threading
 import urllib.parse
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -66,11 +65,6 @@ class AccessResult:
         if self.available_tags:
             d["available_tags"] = self.available_tags[:10]
         return d
-
-    def __str__(self) -> str:
-        if self.ok:
-            return f"ok {self.image}"
-        return f"{self.image}: {self.detail or self.reason}"
 
 
 def _head_manifest(client: RegistryClient, repo: str, ref: str, timeout: float) -> int:
@@ -185,7 +179,6 @@ def check_many(
     images: Iterable[str],
     concurrency: int = 8,
     timeout: float = 30.0,
-    on_result=None,
 ) -> list[AccessResult]:
     """Check a whole list, in input order.
 
@@ -198,16 +191,8 @@ def check_many(
     if not items:
         return []
 
-    lock = threading.Lock()
-    done = [0]
-
     def one(ref: str) -> AccessResult:
-        res = check_access(ref, timeout=timeout)
-        if on_result is not None:
-            with lock:
-                done[0] += 1
-                on_result(res, done[0], len(items))
-        return res
+        return check_access(ref, timeout=timeout)
 
     workers = max(1, min(concurrency, len(items)))
     if workers == 1:

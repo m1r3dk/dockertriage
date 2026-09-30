@@ -138,7 +138,6 @@ def pull_many(
     verify_pulls: bool = True,
     deep_verify: bool = False,
     check_access: bool = True,
-    on_result=None,
 ) -> list[BatchResult]:
     """Pull every image in `images`, isolating failures.
 
@@ -174,8 +173,7 @@ def pull_many(
         if not quiet:
             print(msg, file=sys.stderr, flush=True)
 
-    def where() -> str:
-        return os.path.abspath(out_dir)
+    where = os.path.abspath(out_dir)
 
     # Check the budget before spending it. Finding out mid-run that the list
     # was always too big is the failure mode this avoids.
@@ -215,13 +213,8 @@ def pull_many(
             f"  {counts['ok']}/{counts['total']} accessible, "
             f"{counts['unavailable']} not ({time.time() - t_pre:.1f}s)"
         )
-        for key, label in (
-            ("inaccessible", "private, deleted, or taken down"),
-            ("missing_tag", "tag does not exist"),
-            ("error", "could not be checked"),
-            ("rate_limited", "rate limited before checking"),
-        ):
-            if counts.get(key):
+        for key, label in preflight.REASONS.items():
+            if key != "ok" and counts.get(key):
                 log(f"    {counts[key]} {label}")
         # Record the unreachable ones as results so they appear in the
         # report and the tally, rather than silently vanishing from a list
@@ -260,7 +253,7 @@ def pull_many(
 
     # Say where the files are going before the first byte lands, so it is on
     # screen no matter how long the run is or where it stops.
-    log(f"extracting into {where()}")
+    log(f"extracting into {where}")
 
     def draw_bar(image: str, seen: int, total: int) -> None:
         """Redraw the in-place progress line for the image being pulled."""
@@ -359,8 +352,6 @@ def pull_many(
             else:
                 detail = "  " + (res.error or "; ".join(res.verify_problems) or "unverified")
             log(f"[{counter[0]:>{width}}/{len(items)}] {mark} {image} ({res.seconds:.1f}s){detail}")
-        if on_result is not None:
-            on_result(res)
         return res
 
     started = time.time()
@@ -409,7 +400,7 @@ def pull_many(
         if unattempted:
             log(f"  {unattempted} never attempted")
     # Repeat the destination at the end, where the eye lands when the run stops.
-    log(f"files are in {where()}")
+    log(f"files are in {where}")
     for r in failed:
         log(f"  FAIL {r.image}: {r.error or '; '.join(r.verify_problems)}")
     if rate_limited.is_set():

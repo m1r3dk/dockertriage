@@ -7,6 +7,7 @@ Typer is a hard dependency, so nothing here is conditional.
 """
 
 import contextlib
+import dataclasses
 import hashlib
 import io
 import json
@@ -239,7 +240,7 @@ class TestVerifyCommand(unittest.TestCase):
             "image": folder,
             "layers": [{"digest": "sha256:a", "size": 1}],
             "complete": complete,
-            "rootfs": core.scan_tree(dest).as_dict(),
+            "rootfs": dataclasses.asdict(core.scan_tree(dest)),
         }
         with open(os.path.join(dest, ".image.json"), "w") as fh:
             json.dump(meta, fh)

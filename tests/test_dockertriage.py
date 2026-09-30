@@ -9,6 +9,7 @@ library modules directly, which is why this file imports no typer.
 """
 
 import contextlib
+import dataclasses
 import hashlib
 import io
 import json
@@ -872,7 +873,7 @@ class TestVerification(unittest.TestCase):
             "image": f"library/{name}:latest",
             "layers": [{"digest": "sha256:abc", "size": 1, "command": "RUN x"}],
             "complete": complete,
-            "rootfs": dp.scan_tree(dest).as_dict(),
+            "rootfs": dataclasses.asdict(dp.scan_tree(dest)),
         }
         with open(os.path.join(dest, ".image.json"), "w") as fh:
             json.dump(meta, fh)
@@ -1190,7 +1191,7 @@ class TestBatchVerifiesWhatItPulled(unittest.TestCase):
                     "image": image,
                     "layers": [{"digest": "sha256:a", "size": 1}],
                     "complete": True,
-                    "rootfs": dp.scan_tree(dest).as_dict(),
+                    "rootfs": dataclasses.asdict(dp.scan_tree(dest)),
                 }
                 with open(os.path.join(dest, ".image.json"), "w") as fh:
                     json.dump(meta, fh)
@@ -1292,7 +1293,7 @@ class TestBatchVerifiesWhatItPulled(unittest.TestCase):
                 "layers": [{"digest": "sha256:a", "size": 1}],
                 "complete": True,
                 "compressed_bytes": 1234,
-                "rootfs": dp.scan_tree(dest).as_dict(),
+                "rootfs": dataclasses.asdict(dp.scan_tree(dest)),
             }
             with open(os.path.join(dest, ".image.json"), "w") as fh:
                 json.dump(meta, fh)
@@ -1321,7 +1322,7 @@ class TestBatchVerifiesWhatItPulled(unittest.TestCase):
                 "layers": [{"digest": "sha256:a", "size": 1}],
                 "complete": True,
                 "compressed_bytes": 2000,
-                "rootfs": dp.scan_tree(dest).as_dict(),
+                "rootfs": dataclasses.asdict(dp.scan_tree(dest)),
             }
             with open(os.path.join(dest, ".image.json"), "w") as fh:
                 json.dump(meta, fh)
@@ -1353,7 +1354,7 @@ class TestBatchVerifiesWhatItPulled(unittest.TestCase):
                 "image": image,
                 "layers": [{"digest": "sha256:a", "size": 1}],
                 "complete": True,
-                "rootfs": dp.scan_tree(dest).as_dict(),
+                "rootfs": dataclasses.asdict(dp.scan_tree(dest)),
             }
             with open(os.path.join(dest, ".image.json"), "w") as fh:
                 json.dump(meta, fh)
@@ -1388,7 +1389,7 @@ class TestBatchVerifiesWhatItPulled(unittest.TestCase):
                 "image": image,
                 "layers": [{"digest": "sha256:a", "size": 1}],
                 "complete": True,
-                "rootfs": dp.scan_tree(dest).as_dict(),
+                "rootfs": dataclasses.asdict(dp.scan_tree(dest)),
             }
             with open(os.path.join(dest, ".image.json"), "w") as fh:
                 json.dump(meta, fh)
@@ -1617,7 +1618,7 @@ class TestBatchSkipsUnreachableImages(unittest.TestCase):
                 "image": image,
                 "layers": [{"digest": "sha256:a"}],
                 "complete": True,
-                "rootfs": dp.scan_tree(dest).as_dict(),
+                "rootfs": dataclasses.asdict(dp.scan_tree(dest)),
             }
             with open(os.path.join(dest, ".image.json"), "w") as fh:
                 json.dump(meta, fh)

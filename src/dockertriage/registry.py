@@ -27,9 +27,10 @@ __all__ = ["RegistryClient"]
 class RegistryClient:
     """Thin registry client with per-thread keep-alive connections."""
 
-    def __init__(self, image: ImageRef, retries: int = 3, timeout: float = 60.0):
+    retries = 3
+
+    def __init__(self, image: ImageRef, timeout: float = 60.0):
         self.image = image
-        self.retries = max(1, retries)
         self.timeout = timeout
         self._token: str | None = None
         self._local = threading.local()
@@ -197,14 +198,14 @@ class RegistryClient:
             ctype = (resp.getheader("Content-Type") or "").split(";", 1)[0].strip()
             return json.loads(resp.read().decode("utf-8")), ctype
 
-    def list_tags(self, limit: int = 100) -> list[str]:
+    def list_tags(self) -> list[str]:
         """Tags for this repo via the standard /v2/ endpoint.
 
         Used to turn a bare 'not found' into an actionable message. Any
         failure here is non-fatal: this is diagnostics, not the main path.
         """
         try:
-            resp = self._request(f"/v2/{self.image.repo}/tags/list?n={limit}")
+            resp = self._request(f"/v2/{self.image.repo}/tags/list?n=100")
             with resp:
                 return list(json.loads(resp.read().decode("utf-8")).get("tags") or [])
         except Exception:

@@ -47,9 +47,6 @@ class TreeStats:
     bytes: int = 0
     unreadable: int = 0
 
-    def as_dict(self) -> dict[str, int]:
-        return dataclasses.asdict(self)
-
     def __str__(self) -> str:
         return f"{self.files} files, {self.dirs} dirs, {self.symlinks} symlinks, {self.bytes} bytes"
 
@@ -301,7 +298,7 @@ def verify_dest(dest: str, image: str | None = None, quick: bool = False) -> Ver
         return result
 
     found = scan_tree(dest)
-    result.found = found.as_dict()
+    result.found = dataclasses.asdict(found)
     if expected is None:
         # Pulled by an older version that did not take a census. The folder
         # is complete, but there is nothing to compare it against.
@@ -331,9 +328,7 @@ def verify_dest(dest: str, image: str | None = None, quick: bool = False) -> Ver
     return result
 
 
-def verify_list(
-    images: Iterable[str], out_dir: str, quick: bool = False, on_result=None
-) -> list[VerifyResult]:
+def verify_list(images: Iterable[str], out_dir: str, quick: bool = False) -> list[VerifyResult]:
     """Verify every image in a list against the folders a batch would create.
 
     This is the direct answer to "did all of them download?": it starts from
@@ -349,33 +344,24 @@ def verify_list(
         try:
             folder = parse_image(ref).folder_name
         except ValueError as exc:
-            res = VerifyResult(image=ref, dest="", status="missing", problems=[str(exc)])
-            results.append(res)
-            if on_result is not None:
-                on_result(res)
+            results.append(VerifyResult(image=ref, dest="", status="missing", problems=[str(exc)]))
             continue
-        res = verify_dest(os.path.join(out_dir, folder), image=ref, quick=quick)
-        results.append(res)
-        if on_result is not None:
-            on_result(res)
+        results.append(verify_dest(os.path.join(out_dir, folder), image=ref, quick=quick))
     return results
 
 
-def verify_output_dir(out_dir: str, quick: bool = False, on_result=None) -> list[VerifyResult]:
+def verify_output_dir(out_dir: str, quick: bool = False) -> list[VerifyResult]:
     """Verify every extracted folder found under `out_dir`.
 
     Used when the list that produced the folders is gone, or when the folder
     itself is the thing being handed to someone else.
     """
-    results: list[VerifyResult] = []
     if not os.path.isdir(out_dir):
         raise OSError(f"not a directory: {out_dir}")
     # A single extracted rootfs is a valid argument too, not just a parent.
     if read_record(out_dir) is not None:
-        res = verify_dest(out_dir, quick=quick)
-        if on_result is not None:
-            on_result(res)
-        return [res]
+        return [verify_dest(out_dir, quick=quick)]
+    results: list[VerifyResult] = []
     for name in sorted(os.listdir(out_dir)):
         # Skip our own bookkeeping and anything hidden: with --keep-tar a
         # failed pull can leave a bare `.layers/` behind, and reporting that
@@ -385,8 +371,5 @@ def verify_output_dir(out_dir: str, quick: bool = False, on_result=None) -> list
         path = os.path.join(out_dir, name)
         if not os.path.isdir(path) or os.path.islink(path):
             continue
-        res = verify_dest(path, quick=quick)
-        results.append(res)
-        if on_result is not None:
-            on_result(res)
+        results.append(verify_dest(path, quick=quick))
     return results

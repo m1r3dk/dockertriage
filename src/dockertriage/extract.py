@@ -109,9 +109,6 @@ class ExtractStats:
     # it is surfaced rather than hidden.
     unresolved_links: int = 0
 
-    def as_dict(self) -> dict[str, int]:
-        return dataclasses.asdict(self)
-
     def __str__(self) -> str:
         base = (
             f"{self.files} files, {self.dirs} dirs, {self.symlinks} symlinks, "
@@ -172,7 +169,6 @@ def extract_layer(
     fileobj: BinaryIO,
     rootfs: str,
     stats: ExtractStats,
-    preserve_mode: bool = True,
     path_filter: PathFilter | None = None,
 ) -> int:
     """Apply one layer tar onto rootfs, honouring overlayfs whiteout rules.
@@ -237,8 +233,7 @@ def extract_layer(
                 if os.path.islink(dst) or (os.path.exists(dst) and not os.path.isdir(dst)):
                     _force_remove(dst)
                 os.makedirs(dst, mode=0o755, exist_ok=True)
-                if preserve_mode:
-                    deferred_dir_modes.append((dst, member.mode & 0o7777))
+                deferred_dir_modes.append((dst, member.mode & 0o7777))
                 stats.dirs += 1
                 contributed += 1
                 continue
@@ -256,7 +251,7 @@ def extract_layer(
                     stats.skipped += 1
                     continue
                 # Writable by owner so the output folder stays usable and deletable.
-                mode = (member.mode & 0o7777) | 0o600 if preserve_mode else 0o644
+                mode = (member.mode & 0o7777) | 0o600
                 fd = os.open(dst, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, mode)
                 with os.fdopen(fd, "wb") as out:
                     shutil.copyfileobj(src, out, CHUNK)

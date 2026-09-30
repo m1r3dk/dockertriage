@@ -787,7 +787,3 @@ def top_findings(scan: SecretScan, limit: int = 10) -> list[Finding]:
         key=lambda f: (SEVERITY_ORDER.get(f.severity, 9), not bool(f.verified)),
     )
     return ranked[:limit]
-
-
-def as_report_dict(scan: SecretScan) -> dict[str, Any]:
-    return scan.as_dict()
