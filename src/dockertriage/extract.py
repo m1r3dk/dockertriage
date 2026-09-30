@@ -16,16 +16,6 @@ from typing import BinaryIO
 
 from .constants import CHUNK
 
-__all__ = [
-    "ExtractStats",
-    "PathFilter",
-    "apply_whiteout",
-    "extract_layer",
-    "open_layer_stream",
-    "safe_join",
-    "safe_relpath",
-]
-
 
 def safe_relpath(name: str) -> str | None:
     if not name:

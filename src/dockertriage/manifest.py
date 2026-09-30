@@ -10,8 +10,6 @@ from .constants import INDEX_TYPES
 from .registry import RegistryClient
 from .tags import natural_key, newest_tag
 
-__all__ = ["Layer", "pick_platform_manifest", "resolve_layers"]
-
 
 def pick_platform_manifest(index: dict[str, Any], os_name: str, arch: str) -> str:
     manifests = [m for m in (index.get("manifests") or []) if m.get("digest")]

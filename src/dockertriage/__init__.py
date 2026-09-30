@@ -8,7 +8,6 @@ re-exports; everything else is an implementation detail and may move.
 """
 
 from .batch import BatchResult, pull_many, read_image_list
-from .errors import RateLimited
 from .extract import (
     ExtractStats,
     PathFilter,
@@ -22,7 +21,7 @@ from .preflight import AccessResult, check_access, check_many
 from .puller import pull
 from .ratelimit import RateBudget, check_rate_budget
 from .reference import ImageRef, parse_image
-from .registry import RegistryClient
+from .registry import RateLimited, RegistryClient
 from .secretreport import DEFAULT_OUTPUT_DIR, write_report
 from .secrets import (
     Finding,

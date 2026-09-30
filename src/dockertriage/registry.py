@@ -16,12 +16,17 @@ import urllib.request
 from typing import Any
 
 from .constants import CHUNK, DOCKERHUB_TOKEN_URL, ECR_PUBLIC_TOKEN_URL, MANIFEST_ACCEPT, USER_AGENT
-from .errors import RateLimited, RetryableError
 from .ratelimit import registry_credentials
 from .reference import ImageRef
 from .tls import ssl_context
 
-__all__ = ["RegistryClient"]
+
+class RateLimited(RuntimeError):
+    """The registry refused us for volume, not for permissions."""
+
+
+class RetryableError(Exception):
+    """An error worth another attempt, e.g. a dropped keep-alive socket."""
 
 
 class RegistryClient:

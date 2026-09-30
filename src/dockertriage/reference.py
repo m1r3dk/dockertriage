@@ -8,8 +8,6 @@ import urllib.parse
 
 from .constants import DOCKERHUB_REGISTRY, ECR_PUBLIC_REGISTRY
 
-__all__ = ["ImageRef", "parse_image"]
-
 
 class ImageRef:
     __slots__ = ("registry", "host", "repo", "ref", "is_digest", "ref_implicit", "ref_inferred")

@@ -5,8 +5,6 @@ Used to recover when the 'latest' we assumed does not exist.
 
 import re
 
-__all__ = ["natural_key", "newest_tag"]
-
 
 def natural_key(tag: str) -> tuple:
     """Sort tags so v9 < v10, rather than lexically where v10 < v9."""

@@ -21,18 +21,6 @@ from typing import Any
 from .constants import IMAGE_META_NAME, LAYER_CACHE_NAME
 from .reference import parse_image
 
-__all__ = [
-    "CHECK_HELP",
-    "Check",
-    "TreeStats",
-    "VerifyResult",
-    "read_record",
-    "scan_tree",
-    "verify_dest",
-    "verify_list",
-    "verify_output_dir",
-]
-
 # Bookkeeping we wrote ourselves; it is not part of the image's filesystem.
 _TOP_LEVEL_SKIP = {IMAGE_META_NAME, LAYER_CACHE_NAME}
 

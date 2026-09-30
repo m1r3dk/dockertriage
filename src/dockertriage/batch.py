@@ -17,11 +17,9 @@ from typing import Any
 from . import preflight, puller, ratelimit
 from . import verify as verify_mod
 from .constants import SKIPPED_FILE_NAME
-from .errors import RateLimited
 from .humanize import human_bytes, size_bar
 from .ratelimit import RateBudget, registry_credentials
-
-__all__ = ["BatchResult", "pull_many", "read_image_list"]
+from .registry import RateLimited
 
 
 def read_image_list(path: str) -> list[str]:

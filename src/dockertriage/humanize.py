@@ -6,18 +6,6 @@ renders through rich. Both read from this file, so a layer line looks the
 same whichever command produced it.
 """
 
-__all__ = [
-    "human_bytes",
-    "one_line",
-    "short_digest",
-    "build_step",
-    "size_bar",
-    "layer_row",
-    "INDEX_W",
-    "SIZE_W",
-    "BAR_W",
-]
-
 # Noise every buildkit image repeats on most layers. Stripping it leaves the
 # part of the command that actually differs between one layer and the next.
 _PREFIXES = ("RUN /bin/sh -c ", "/bin/sh -c ", "RUN ")

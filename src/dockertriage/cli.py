@@ -35,8 +35,6 @@ from .reference import parse_image
 from .registry import RegistryClient
 from .version import __version__
 
-__all__ = ["app", "main"]
-
 app = typer.Typer(
     name="dockertriage",
     help="Download a Docker image and extract its full rootfs to a folder.",

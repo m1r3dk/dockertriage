@@ -33,24 +33,6 @@ from typing import Any
 
 from .constants import IMAGE_META_NAME, LAYER_CACHE_NAME
 
-__all__ = [
-    "ENGINES",
-    "Engine",
-    "Finding",
-    "ScanCoverage",
-    "ScanResult",
-    "available_engines",
-    "credential_file_reason",
-    "discover_targets",
-    "select_engines",
-    "is_commented_out",
-    "merge_findings",
-    "noise_reason",
-    "scan_image_config",
-    "scan_tree_for_secrets",
-    "secret_env_findings",
-]
-
 # Our own bookkeeping, which is not part of the image's filesystem. The
 # record is read deliberately for its config, not walked as a source file.
 _SELF_SKIP = {LAYER_CACHE_NAME}

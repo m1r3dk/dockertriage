@@ -20,8 +20,6 @@ from typing import Any
 
 from .secrets import SEVERITY_ORDER, Finding, ScanResult, SecretScan
 
-__all__ = ["DEFAULT_OUTPUT_DIR", "write_report"]
-
 # Created in the working directory unless -o says otherwise, so a scan never
 # writes into the image being scanned.
 DEFAULT_OUTPUT_DIR = "extracted_secrets"

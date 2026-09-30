@@ -24,8 +24,6 @@ from .reference import parse_image
 from .registry import RegistryClient
 from .verify import scan_tree
 
-__all__ = ["pull"]
-
 
 def pull(
     image_input: str,
