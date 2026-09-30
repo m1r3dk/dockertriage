@@ -12,6 +12,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -242,20 +243,20 @@ def pull(
         _pull_batch(
             list_file,
             output if output is not None else Path(BATCH_OUTPUT_DIR),
-            jobs,
-            concurrency,
             report,
-            stop_on_error,
-            target_os,
-            target_arch,
-            keep_tar,
-            verify,
-            quiet,
-            strict_tag,
-            not no_budget_check,
-            check,
-            deep,
-            check_access,
+            jobs=jobs,
+            os_name=target_os,
+            arch=target_arch,
+            keep_tar=keep_tar,
+            quiet=quiet,
+            verify=verify,
+            concurrency=concurrency,
+            stop_on_error=stop_on_error,
+            strict_tag=strict_tag,
+            check_budget=not no_budget_check,
+            verify_pulls=check,
+            deep_verify=deep,
+            check_access=check_access,
         )
         return
 
@@ -301,25 +302,12 @@ def pull(
     print(dest_path)
 
 
-def _pull_batch(
-    list_file: Path,
-    output: Path,
-    jobs: int,
-    concurrency: int,
-    report: Path | None,
-    stop_on_error: bool,
-    target_os: str,
-    target_arch: str,
-    keep_tar: bool,
-    verify: bool,
-    quiet: bool,
-    strict_tag: bool,
-    check_budget: bool,
-    check: bool = True,
-    deep: bool = False,
-    check_access: bool = True,
-) -> None:
-    """Batch half of `pull`, kept separate so each path stays readable."""
+def _pull_batch(list_file: Path, output: Path, report: Path | None, **options: Any) -> None:
+    """Batch half of `pull`, kept separate so each path stays readable.
+
+    `options` go straight to `batch.pull_many`, so its signature is the one
+    place the batch knobs are declared.
+    """
     global _exit_code
     try:
         images = batch.read_image_list(str(list_file))
@@ -329,23 +317,7 @@ def _pull_batch(
         raise _fail(f"no image references found in {list_file}")
 
     try:
-        results = batch.pull_many(
-            images,
-            str(output),
-            jobs=jobs,
-            os_name=target_os,
-            arch=target_arch,
-            keep_tar=keep_tar,
-            quiet=quiet,
-            verify=verify,
-            concurrency=concurrency,
-            stop_on_error=stop_on_error,
-            strict_tag=strict_tag,
-            check_budget=check_budget,
-            verify_pulls=check,
-            deep_verify=deep,
-            check_access=check_access,
-        )
+        results = batch.pull_many(images, str(output), **options)
     except KeyboardInterrupt:
         _exit_code = 130
         console.print("[yellow]interrupted[/yellow]")
