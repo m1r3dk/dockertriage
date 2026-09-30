@@ -108,12 +108,8 @@ def parse_image(raw: str) -> ImageRef:
 
 
 def _is_digest(ref: str | None) -> bool:
-    return (
-        bool(ref)
-        and "@" not in str(ref)
-        and str(ref).split(":", 1)[0] in ("sha256", "sha512")
-        and ":" in str(ref)
-    )
+    algo, sep, _ = (ref or "").partition(":")
+    return bool(sep) and algo in ("sha256", "sha512") and "@" not in (ref or "")
 
 
 def _ref_from_query(query: str) -> str | None:

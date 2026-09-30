@@ -4,6 +4,7 @@ Two traps live here: buildkit attestation entries masquerade as platforms,
 and config history contains metadata-only steps with no layer behind them.
 """
 
+import dataclasses
 from typing import Any
 
 from .constants import INDEX_TYPES
@@ -36,15 +37,13 @@ def pick_platform_manifest(index: dict[str, Any], os_name: str, arch: str) -> st
     return pool[0]["digest"]
 
 
+@dataclasses.dataclass(slots=True)
 class Layer:
-    __slots__ = ("index", "digest", "size", "media_type", "command")
-
-    def __init__(self, index: int, digest: str, size: int, media_type: str, command: str = ""):
-        self.index = index
-        self.digest = digest
-        self.size = size
-        self.media_type = media_type
-        self.command = command
+    index: int
+    digest: str
+    size: int
+    media_type: str
+    command: str = ""
 
 
 def resolve_layers(

@@ -17,6 +17,7 @@ nothing about where. So the report never claims "nothing was missed"; it
 reports what the evidence shows and is explicit about that limit.
 """
 
+import dataclasses
 import posixpath
 import shlex
 from typing import Any
@@ -25,17 +26,15 @@ from typing import Any
 _BUILDKIT_SUFFIX = "# buildkit"
 
 
+@dataclasses.dataclass(slots=True)
 class CopyDestination:
     """One path a COPY or ADD step wrote to, and whether the filter kept it."""
 
-    __slots__ = ("layer_index", "verb", "path", "covered", "command")
-
-    def __init__(self, layer_index: int, verb: str, path: str, command: str):
-        self.layer_index = layer_index
-        self.verb = verb
-        self.path = path
-        self.command = command
-        self.covered = False
+    layer_index: int
+    verb: str
+    path: str
+    command: str
+    covered: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -121,24 +120,15 @@ def _is_covered(dest: str, paths: tuple[str, ...]) -> bool:
     return False
 
 
+@dataclasses.dataclass(slots=True)
 class FilterReport:
     """What a filtered extraction kept, and what the evidence says it dropped."""
 
-    __slots__ = ("paths", "destinations", "match_counts", "layer_hits", "unresolved_links")
-
-    def __init__(
-        self,
-        paths: tuple[str, ...],
-        destinations: list[CopyDestination],
-        match_counts: dict[str, int],
-        layer_hits: dict[int, int],
-        unresolved_links: int = 0,
-    ):
-        self.paths = paths
-        self.destinations = destinations
-        self.match_counts = match_counts
-        self.layer_hits = layer_hits
-        self.unresolved_links = unresolved_links
+    paths: tuple[str, ...]
+    destinations: list[CopyDestination]
+    match_counts: dict[str, int]
+    layer_hits: dict[int, int]
+    unresolved_links: int = 0
 
     @property
     def uncovered(self) -> list[CopyDestination]:
