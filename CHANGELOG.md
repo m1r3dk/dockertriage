@@ -141,6 +141,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Removed
 - **The `dt layers` command.** Use `dt inspect --digests` instead.
+- **Unused library parameters.** `pull_many`, `check_many`, `verify_list` and
+  `verify_output_dir` no longer take `on_result`; `extract_layer` no longer
+  takes `preserve_mode` (modes are always preserved); `RegistryClient` no
+  longer takes `retries` (set the `retries` class attribute instead). No caller
+  in this project passed any of them.
+- **`dockertriage.errors`.** `RateLimited` now lives in `dockertriage.registry`
+  and is still exported as `dockertriage.RateLimited`.
+- **`PROMPT.md`.** The original spec is in git history; README and
+  CONTRIBUTING describe the tool as it is.
 
 ## [2.0.0] - 2026-09-26
 

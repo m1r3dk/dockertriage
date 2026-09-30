@@ -35,6 +35,9 @@ class TreeStats:
     bytes: int = 0
     unreadable: int = 0
 
+    def as_dict(self) -> dict[str, int]:
+        return dataclasses.asdict(self)
+
     def __str__(self) -> str:
         return f"{self.files} files, {self.dirs} dirs, {self.symlinks} symlinks, {self.bytes} bytes"
 
@@ -286,7 +289,7 @@ def verify_dest(dest: str, image: str | None = None, quick: bool = False) -> Ver
         return result
 
     found = scan_tree(dest)
-    result.found = dataclasses.asdict(found)
+    result.found = found.as_dict()
     if expected is None:
         # Pulled by an older version that did not take a census. The folder
         # is complete, but there is nothing to compare it against.

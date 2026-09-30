@@ -99,6 +99,9 @@ class ExtractStats:
     # it is surfaced rather than hidden.
     unresolved_links: int = 0
 
+    def as_dict(self) -> dict[str, int]:
+        return dataclasses.asdict(self)
+
     def __str__(self) -> str:
         base = (
             f"{self.files} files, {self.dirs} dirs, {self.symlinks} symlinks, "

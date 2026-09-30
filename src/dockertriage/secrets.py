@@ -135,6 +135,11 @@ class ScanCoverage:
     excluded_paths: Counter[str] = dataclasses.field(default_factory=Counter)
     excluded_findings: Counter[str] = dataclasses.field(default_factory=Counter)
 
+    def __post_init__(self) -> None:
+        # Callers may pass plain dicts; Counter keeps `+= 1` and totals simple.
+        self.excluded_paths = Counter(self.excluded_paths)
+        self.excluded_findings = Counter(self.excluded_findings)
+
     # Enough to act on without turning the report into a second filesystem.
     _MAX_NAMED = 500
 

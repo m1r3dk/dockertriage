@@ -4,7 +4,6 @@ Layers download in parallel but extract strictly in order, so a later
 layer's whiteouts always land on the base they were built against.
 """
 
-import dataclasses
 import json
 import os
 import shutil
@@ -221,11 +220,11 @@ def pull(
             "config": {
                 k: image_cfg.get(k) for k in ("Env", "Entrypoint", "Cmd", "WorkingDir", "User")
             },
-            "extracted": dataclasses.asdict(stats),
+            "extracted": stats.as_dict(),
             # A census of the tree as it stands right now, so a later run of
             # `dt verify` can tell a complete folder from one that lost files
             # to a full disk, an interrupted copy, or a stray rm.
-            "rootfs": dataclasses.asdict(scan_tree(dest)),
+            "rootfs": scan_tree(dest).as_dict(),
             "layer_count": len(layers),
             "compressed_bytes": total_bytes,
             "verified_digests": bool(verify),
