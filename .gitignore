@@ -25,9 +25,10 @@ htmlcov/
 *.swp
 
 # --- This tool's own output -------------------------------------------
-# srctriage extracts container filesystems, which are large, are not
-# ours to redistribute, and can contain credentials baked into the image.
-# None of it belongs in version control.
+# srctriage extracts container filesystems and other people's repositories,
+# which are large, are not ours to redistribute, and can contain credentials
+# baked into the image or committed to the repository. None of it belongs in
+# version control.
 
 # Default batch destination, and the conventional single-image ones.
 out/
@@ -41,6 +42,10 @@ library_*/
 *_latest/
 */.image.json
 .layers/
+# A GitHub pull lands as github_<owner>_<repo>[_<ref>]/, with its optional
+# history clone inside it.
+github_*/
+.history.git/
 
 # The skip list a batch writes next to its downloads.
 not-downloaded.txt
