@@ -19,7 +19,7 @@ import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from dockertriage import secretreport, secrets  # noqa: E402
+from srctriage import secretreport, secrets  # noqa: E402
 
 
 class TestNamedSecretVariables(unittest.TestCase):
@@ -233,7 +233,7 @@ class TestScanningATree(unittest.TestCase):
     """End to end, with no engine installed: the floor must still hold."""
 
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="dt-secrets-")
+        self.root = tempfile.mkdtemp(prefix="st-secrets-")
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def _write(self, rel, text):
@@ -314,10 +314,10 @@ class TestScanningATree(unittest.TestCase):
 
 
 class TestDiscoveringTargets(unittest.TestCase):
-    """`dt secrets .` has to mean the right thing in three situations."""
+    """`st secrets .` has to mean the right thing in three situations."""
 
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="dt-secrets-t-")
+        self.root = tempfile.mkdtemp(prefix="st-secrets-t-")
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def _image(self, name):
@@ -338,7 +338,7 @@ class TestDiscoveringTargets(unittest.TestCase):
         self.assertEqual(len(found), 2)
 
     def test_an_ordinary_directory_is_scanned_whole(self):
-        """`dt secrets .` in a source checkout must scan the checkout."""
+        """`st secrets .` in a source checkout must scan the checkout."""
         os.makedirs(os.path.join(self.root, "src"), exist_ok=True)
         self.assertEqual(secrets.discover_targets(self.root), [os.path.abspath(self.root)])
 
@@ -347,9 +347,9 @@ class TestReportLayout(unittest.TestCase):
     """The output folder is what someone acts from, so its shape is pinned."""
 
     def setUp(self):
-        self.out = tempfile.mkdtemp(prefix="dt-secrets-out-")
+        self.out = tempfile.mkdtemp(prefix="st-secrets-out-")
         self.addCleanup(shutil.rmtree, self.out, True)
-        self.src = tempfile.mkdtemp(prefix="dt-secrets-src-")
+        self.src = tempfile.mkdtemp(prefix="st-secrets-src-")
         self.addCleanup(shutil.rmtree, self.src, True)
         credentials = os.path.join(self.src, "root", ".aws", "credentials")
         os.makedirs(os.path.dirname(credentials), exist_ok=True)
@@ -455,7 +455,7 @@ class TestReportLayout(unittest.TestCase):
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
     def test_an_in_progress_report_is_marked_and_then_cleared(self):
-        out = tempfile.mkdtemp(prefix="dt-secrets-progress-")
+        out = tempfile.mkdtemp(prefix="st-secrets-progress-")
         self.addCleanup(shutil.rmtree, out, True)
 
         base = secretreport.write_report(self.scan, out, complete=False)
@@ -477,7 +477,7 @@ class TestReportLayout(unittest.TestCase):
                 )
             ]
         )
-        out = tempfile.mkdtemp(prefix="dt-secrets-empty-")
+        out = tempfile.mkdtemp(prefix="st-secrets-empty-")
         self.addCleanup(shutil.rmtree, out, True)
         base = secretreport.write_report(empty, out)
         with open(os.path.join(base, "SUMMARY.md"), encoding="utf-8") as fh:
@@ -634,7 +634,7 @@ class TestExclusionIsCountedNotSilent(unittest.TestCase):
     """Skipping quietly produces the same report as a clean image."""
 
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="dt-noise-")
+        self.root = tempfile.mkdtemp(prefix="st-noise-")
         self.addCleanup(shutil.rmtree, self.root, True)
         os.makedirs(os.path.join(self.root, "app", "node_modules", "pkg"))
         with open(os.path.join(self.root, "app", "node_modules", "pkg", "doc.js"), "w") as fh:
@@ -671,9 +671,9 @@ class TestByTypeIsStructured(unittest.TestCase):
     """The by-type folder is read by people and by tools."""
 
     def setUp(self):
-        self.out = tempfile.mkdtemp(prefix="dt-bytype-")
+        self.out = tempfile.mkdtemp(prefix="st-bytype-")
         self.addCleanup(shutil.rmtree, self.out, True)
-        src = tempfile.mkdtemp(prefix="dt-bytype-src-")
+        src = tempfile.mkdtemp(prefix="st-bytype-src-")
         self.addCleanup(shutil.rmtree, src, True)
         result = secrets.ScanResult(image="example/app:1.0", root=src)
         # The same key in three images: one thing to rotate, three to edit.
@@ -917,7 +917,7 @@ class TestArchiveAwarePaths(unittest.TestCase):
 
     def test_archives_are_not_called_unexamined_when_betterleaks_runs(self):
         """Claiming a gap that no longer exists understates coverage."""
-        root = tempfile.mkdtemp(prefix="dt-arch-")
+        root = tempfile.mkdtemp(prefix="st-arch-")
         self.addCleanup(shutil.rmtree, root, True)
         with open(os.path.join(root, "bundle.tar.gz"), "wb") as fh:
             fh.write(b"\x1f\x8b\x08\x00")

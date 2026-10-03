@@ -25,7 +25,7 @@ htmlcov/
 *.swp
 
 # --- This tool's own output -------------------------------------------
-# dockertriage extracts container filesystems, which are large, are not
+# srctriage extracts container filesystems, which are large, are not
 # ours to redistribute, and can contain credentials baked into the image.
 # None of it belongs in version control.
 
@@ -52,7 +52,7 @@ analysis/
 *secrets*
 *verified_keys*
 # ...but the secret-scanning feature itself is source code, not findings.
-!src/dockertriage/secrets.py
+!src/srctriage/secrets.py
 !tests/test_secrets.py
 
 # Scratch inputs and dumps. The image lists used during development name
@@ -62,7 +62,7 @@ analysis/
 examples/
 mentions.txt
 
-# Reports produced by --report / dt verify -r.
+# Reports produced by --report / st verify -r.
 report.json
 verify.json
 

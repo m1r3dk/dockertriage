@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Renamed from `dockertriage` to `srctriage`, and the command from `dt` to
+  `st`.** The tool is growing beyond container images (GitHub repositories
+  are next), so a name tied to Docker would soon be wrong. This is a clean
+  break with no aliases: the package, the import (`import srctriage`), the
+  console scripts (`srctriage` and `st`), the repository URL and the secrets
+  engine label (`engine: "srctriage"`) all change together. Reinstall with
+  `pipx uninstall dockertriage && pipx install "srctriage @ git+https://github.com/m1r3dk/srctriage.git"`.
+
 ### Added
 - **betterleaks is now the primary engine, and gitleaks stands down.**
   gitleaks is no longer maintained; betterleaks is its continuation, with the

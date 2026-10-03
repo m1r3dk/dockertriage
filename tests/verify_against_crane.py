@@ -21,7 +21,7 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-import dockertriage as dp
+import srctriage as dp
 
 DEFAULT_IMAGES = ["alpine:3.19", "debian:bookworm-slim", "python:3.12-slim", "redis:latest"]
 
@@ -137,7 +137,7 @@ def main(argv: list[str]) -> int:
 
     images = argv[1:] or DEFAULT_IMAGES
     platform = os.environ.get("VERIFY_PLATFORM", "linux/amd64")
-    workdir = tempfile.mkdtemp(prefix="dt-verify-")
+    workdir = tempfile.mkdtemp(prefix="st-verify-")
     print(f"verifying {len(images)} image(s) against crane export ({platform})\n")
     try:
         results = [compare(img, platform, workdir) for img in images]

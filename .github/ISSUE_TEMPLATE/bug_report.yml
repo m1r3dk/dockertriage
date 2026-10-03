@@ -22,7 +22,7 @@ body:
     attributes:
       label: Command
       description: The full command, including flags.
-      placeholder: "dt -f images.txt -o ./out -c 4"
+      placeholder: "st -f images.txt -o ./out -c 4"
       render: shell
     validations:
       required: true
@@ -42,7 +42,7 @@ body:
     attributes:
       label: Output
       description: |
-        Paste the run. Progress goes to stderr, so use `dt ... 2>&1 | tee log.txt`
+        Paste the run. Progress goes to stderr, so use `st ... 2>&1 | tee log.txt`
         to capture it. Redact anything private.
       render: shell
     validations:
@@ -52,7 +52,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: Output of `dt --version`.
+      description: Output of `st --version`.
     validations:
       required: true
 
@@ -69,5 +69,5 @@ body:
     attributes:
       label: Anything else
       description: |
-        If it is an extraction problem, `dt verify <folder> --deep` and the
+        If it is an extraction problem, `st verify <folder> --deep` and the
         contents of `.image.json` are usually the fastest route to the cause.

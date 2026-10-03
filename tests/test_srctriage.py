@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for the dockertriage core — no network required.
+"""Tests for the srctriage core — no network required.
 
 The CLI has its own suite in tests/test_cli.py; everything here targets the
 library modules directly, which is why this file imports no typer.
 
     python3 -m pytest tests/
-    python3 tests/test_dockertriage.py
+    python3 tests/test_srctriage.py
 """
 
 import contextlib
@@ -21,14 +21,14 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-import dockertriage as dp
-from dockertriage import batch as batch_mod
-from dockertriage import coverage as coverage_mod
-from dockertriage import preflight as preflight_mod
-from dockertriage import puller as puller_mod
-from dockertriage import ratelimit as ratelimit_mod
-from dockertriage import tags as tags_mod
-from dockertriage.humanize import build_step, human_bytes, one_line, short_digest
+import srctriage as dp
+from srctriage import batch as batch_mod
+from srctriage import coverage as coverage_mod
+from srctriage import preflight as preflight_mod
+from srctriage import puller as puller_mod
+from srctriage import ratelimit as ratelimit_mod
+from srctriage import tags as tags_mod
+from srctriage.humanize import build_step, human_bytes, one_line, short_digest
 
 
 class TestOneLine(unittest.TestCase):
@@ -90,7 +90,7 @@ def make_layer(entries) -> io.BytesIO:
 
 class TempRoot(unittest.TestCase):
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="dt-test-")
+        self.root = tempfile.mkdtemp(prefix="st-test-")
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -387,7 +387,7 @@ class TestDigestVerification(unittest.TestCase):
     """A corrupted or tampered layer must never reach the extractor."""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="dt-digest-")
+        self.tmp = tempfile.mkdtemp(prefix="st-digest-")
         self.client = dp.RegistryClient(dp.parse_image("alpine:3.19"))
         self.client._token = "fake-token"
 
@@ -852,7 +852,7 @@ class TestVerification(unittest.TestCase):
     """
 
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="dt-verify-test-")
+        self.root = tempfile.mkdtemp(prefix="st-verify-test-")
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def _make_image(self, name, files=("bin/sh", "etc/hosts"), complete=True, symlink=None):
@@ -1093,7 +1093,7 @@ class TestPullWritesAVerifiableRecord(unittest.TestCase):
     """The pull must leave behind something later runs can actually check."""
 
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="dt-record-test-")
+        self.root = tempfile.mkdtemp(prefix="st-record-test-")
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def _fake_pull(self, quiet=True):
@@ -1170,7 +1170,7 @@ class TestBatchVerifiesWhatItPulled(unittest.TestCase):
     """A batch must report on disk reality, not on what pull() returned."""
 
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="dt-batch-verify-")
+        self.root = tempfile.mkdtemp(prefix="st-batch-verify-")
         self.addCleanup(shutil.rmtree, self.root, True)
         self._real_pull = puller_mod.pull
 
@@ -1586,7 +1586,7 @@ class TestBatchSkipsUnreachableImages(unittest.TestCase):
     """The batch must not spend a download discovering a repo is gone."""
 
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="dt-skip-")
+        self.root = tempfile.mkdtemp(prefix="st-skip-")
         self.addCleanup(shutil.rmtree, self.root, True)
         self._real_pull = puller_mod.pull
         self._real_check = batch_mod.preflight.check_many

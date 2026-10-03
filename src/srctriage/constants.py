@@ -21,7 +21,7 @@ INDEX_TYPES = {
     "application/vnd.oci.image.index.v1+json",
 }
 
-USER_AGENT = "dockertriage/1.0 (+stdlib)"
+USER_AGENT = "srctriage/1.0 (+stdlib)"
 CHUNK = 1 << 20  # 1 MiB
 
 # Where a batch run drops its folders when no -o is given: one image can
@@ -29,7 +29,7 @@ CHUNK = 1 << 20  # 1 MiB
 BATCH_OUTPUT_DIR = "output"
 
 # The per-image record a finished pull leaves in its destination folder. Its
-# presence is the completion marker `dt verify` reads, so the name is shared
+# presence is the completion marker `st verify` reads, so the name is shared
 # rather than spelled out at each use site.
 IMAGE_META_NAME = ".image.json"
 # Raw layer tarballs, kept only with --keep-tar. Not part of the rootfs, so

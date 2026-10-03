@@ -1,4 +1,4 @@
-"""Allow `python -m dockertriage`."""
+"""Allow `python -m srctriage`."""
 
 import sys
 

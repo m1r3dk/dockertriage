@@ -1,7 +1,7 @@
 """Formatting helpers for human-facing output.
 
-The layout constants live here rather than in the CLI because `dt pull`
-prints progress from the stdlib-only library modules while `dt inspect`
+The layout constants live here rather than in the CLI because `st pull`
+prints progress from the stdlib-only library modules while `st inspect`
 renders through rich. Both read from this file, so a layer line looks the
 same whichever command produced it.
 """
@@ -94,7 +94,7 @@ def size_bar(size: int, largest: int, width: int = BAR_W) -> str:
 
 
 def layer_row(index: int, size: int, largest: int, command: str, width: int = 100) -> str:
-    """One plain-text layer line, shared by `dt pull` and `dt inspect`.
+    """One plain-text layer line, shared by `st pull` and `st inspect`.
 
     Returns unstyled text; a caller with rich available can colour the verb
     afterwards. Keeping the arithmetic here is what stops the two commands

@@ -1,6 +1,6 @@
-# dockertriage
+# srctriage
 
-[![CI](https://github.com/m1r3dk/dockertriage/actions/workflows/ci.yml/badge.svg)](https://github.com/m1r3dk/dockertriage/actions/workflows/ci.yml)
+[![CI](https://github.com/m1r3dk/srctriage/actions/workflows/ci.yml/badge.svg)](https://github.com/m1r3dk/srctriage/actions/workflows/ci.yml)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -10,12 +10,12 @@ root filesystem to disk.
 **No Docker daemon. No root access. No running containers.**
 
 ```bash
-dt alpine:3.19
+st alpine:3.19
 ```
 
 ## About
 
-`dockertriage` is a small Python CLI for people who need the files inside a
+`srctriage` is a small Python CLI for people who need the files inside a
 container image, not a running container. It resolves image manifests, downloads
 layers, verifies layer digests, applies OCI whiteouts in order, preserves file
 modes, symlinks and hardlinks, then writes a normal directory you can inspect
@@ -44,7 +44,7 @@ final merged filesystem the container would see after all layers are applied.
 - Lets you extract only an app path with `--path` or the image `WorkingDir` with `--app`
 - Reports what filtered extraction kept and what it left outside the filter
 - Supports batch pulls from image lists with JSON reports
-- Includes `dt verify` for quick or deep checks after extraction
+- Includes `st verify` for quick or deep checks after extraction
 - Keeps the importable library stdlib-only, with Typer/Rich used only by the CLI
 
 ## Installation
@@ -52,40 +52,40 @@ final merged filesystem the container would see after all layers are applied.
 ### Recommended: pipx
 
 ```bash
-pipx install "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git"
+pipx install "srctriage @ git+https://github.com/m1r3dk/srctriage.git"
 ```
 
 Run once without installing:
 
 ```bash
-pipx run --spec "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git" dt alpine:3.19
+pipx run --spec "srctriage @ git+https://github.com/m1r3dk/srctriage.git" st alpine:3.19
 ```
 
 Install from a local checkout:
 
 ```bash
-git clone https://github.com/m1r3dk/dockertriage.git
-pipx install ./dockertriage
+git clone https://github.com/m1r3dk/srctriage.git
+pipx install ./srctriage
 ```
 
 Upgrade or remove:
 
 ```bash
-pipx upgrade dockertriage
-pipx uninstall dockertriage
+pipx upgrade srctriage
+pipx uninstall srctriage
 ```
 
 ### pip
 
 ```bash
-python -m pip install "dockertriage @ git+https://github.com/m1r3dk/dockertriage.git"
+python -m pip install "srctriage @ git+https://github.com/m1r3dk/srctriage.git"
 ```
 
 Or from a local checkout:
 
 ```bash
-git clone https://github.com/m1r3dk/dockertriage.git
-cd dockertriage
+git clone https://github.com/m1r3dk/srctriage.git
+cd srctriage
 python -m pip install .
 ```
 
@@ -104,49 +104,49 @@ Python 3.14 is required because zstd-compressed layers use the standard-library
 Pull and extract one image:
 
 ```bash
-dt alpine:3.19
+st alpine:3.19
 ```
 
 `pull` is implied. This is equivalent:
 
 ```bash
-dt pull alpine:3.19
+st pull alpine:3.19
 ```
 
 Choose a parent output directory or an exact destination:
 
 ```bash
-dt python:3.12-slim -o ./rootfs
-dt redis:7 -d ./redis-rootfs
+st python:3.12-slim -o ./rootfs
+st redis:7 -d ./redis-rootfs
 ```
 
 Select another platform:
 
 ```bash
-dt nginx:latest --platform linux/arm64
+st nginx:latest --platform linux/arm64
 ```
 
 Inspect layers without downloading them:
 
 ```bash
-dt inspect python:3.12-slim
+st inspect python:3.12-slim
 ```
 
 Print only layer digests for scripts:
 
 ```bash
-dt inspect --digests alpine:3.19
+st inspect --digests alpine:3.19
 ```
 
 Verify extracted images later:
 
 ```bash
-dt verify ./output
+st verify ./output
 ```
 
 ## What the output looks like
 
-`dt inspect` shows the resolved image, platform, compressed layer sizes, and the
+`st inspect` shows the resolved image, platform, compressed layer sizes, and the
 build step for each layer:
 
 ```text
@@ -162,7 +162,7 @@ cmd        /bin/sh
 workdir    not set by this image
 ```
 
-`dt pull` uses the same layer row format while downloading and extracting:
+`st pull` uses the same layer row format while downloading and extracting:
 
 ```text
 library/alpine
@@ -182,7 +182,7 @@ The final destination path is written to standard output. Progress and details
 are written to standard error, so command substitution is safe:
 
 ```bash
-ROOTFS=$(dt alpine:3.19 -q)
+ROOTFS=$(st alpine:3.19 -q)
 grep -R "example" "$ROOTFS"
 ```
 
@@ -193,9 +193,9 @@ libraries, certificates, and runtime dependencies. If you only want application
 files, filter the extraction.
 
 ```bash
-dt pull myorg/api:latest --path /app
-dt pull myorg/api:latest --app
-dt pull myorg/api:latest -P /app -P /etc/nginx
+st pull myorg/api:latest --path /app
+st pull myorg/api:latest --app
+st pull myorg/api:latest -P /app -P /etc/nginx
 ```
 
 - `--path /app` keeps only that path. It can be repeated.
@@ -215,7 +215,7 @@ outside the filter: COPY -> /usr/local/bin/docker-entrypoint.sh (layer 5)
 outside the filter: COPY -> /etc/nginx/nginx.conf (layer 11)
 ```
 
-Use `dt inspect` before pulling when you are not sure where the app lives. Look
+Use `st inspect` before pulling when you are not sure where the app lives. Look
 for `COPY`, `ADD`, and `workdir` lines.
 
 ## Why extracted images have many symlinks
@@ -229,7 +229,7 @@ Examples include:
 - package-manager shortcuts
 - `node_modules/.bin/*` links to package executables
 
-`dockertriage` preserves symlinks instead of flattening them because resolving
+`srctriage` preserves symlinks instead of flattening them because resolving
 or copying targets would change what the container sees at runtime. If you only
 care about source code, use `--app` or `--path` and read the filter report for
 links that point outside the kept paths.
@@ -250,14 +250,14 @@ public.ecr.aws/docker/library/ubuntu:24.04
 Pull every image in the list:
 
 ```bash
-dt -f images.txt
+st -f images.txt
 ```
 
 Batch output defaults to `./output/`. Use options to tune concurrency and write
 a report:
 
 ```bash
-dt -f images.txt -o ./rootfs -c 4 -j 8 -r pull-report.json
+st -f images.txt -o ./rootfs -c 4 -j 8 -r pull-report.json
 ```
 
 - `-c 4` pulls up to four images at once
@@ -296,20 +296,20 @@ After extraction, `.image.json` is written and checked. A quick check confirms:
 Run verification later:
 
 ```bash
-dt verify ./output
+st verify ./output
 ```
 
 Include the original list to catch images that never created an output folder:
 
 ```bash
-dt verify ./output -f images.txt
+st verify ./output -f images.txt
 ```
 
 Use `--deep` to walk the extracted tree and compare file, directory, symlink,
 and byte counts against the census recorded at extraction time:
 
 ```bash
-dt verify ./output --deep
+st verify ./output --deep
 ```
 
 Deep verification detects changed aggregate counts. It does not hash every
@@ -319,18 +319,18 @@ extracted file, so a same-size content replacement is outside its scope.
 
 | Command | Purpose |
 | --- | --- |
-| `dt IMAGE` | Pull and extract one image. `pull` is implied. |
-| `dt pull IMAGE` | Explicit single-image pull. |
-| `dt pull IMAGE --path P` | Extract only path `P` and report coverage. |
-| `dt pull IMAGE --app` | Extract only the image's `WorkingDir`. |
-| `dt -f FILE` | Preflight, pull, and verify an image list. |
-| `dt verify PATH` | Verify previously extracted images. |
-| `dt inspect IMAGE` | Show layer sizes and build commands without downloading layers. |
-| `dt inspect --digests IMAGE` | Print layer digests, one per line. |
-| `dt --help` | Show top-level help. |
-| `dt COMMAND --help` | Show command help. |
+| `st IMAGE` | Pull and extract one image. `pull` is implied. |
+| `st pull IMAGE` | Explicit single-image pull. |
+| `st pull IMAGE --path P` | Extract only path `P` and report coverage. |
+| `st pull IMAGE --app` | Extract only the image's `WorkingDir`. |
+| `st -f FILE` | Preflight, pull, and verify an image list. |
+| `st verify PATH` | Verify previously extracted images. |
+| `st inspect IMAGE` | Show layer sizes and build commands without downloading layers. |
+| `st inspect --digests IMAGE` | Print layer digests, one per line. |
+| `st --help` | Show top-level help. |
+| `st COMMAND --help` | Show command help. |
 
-Run `dt pull --help`, `dt inspect --help`, or `dt verify --help` for the full
+Run `st pull --help`, `st inspect --help`, or `st verify --help` for the full
 option list.
 
 ## Credentials and rate limits
@@ -341,7 +341,7 @@ the limit or access repositories your account can pull:
 ```bash
 export DOCKERHUB_USERNAME="your-username"
 export DOCKERHUB_TOKEN="your-personal-access-token"
-dt -f images.txt -c 4
+st -f images.txt -c 4
 ```
 
 Credentials are read only from environment variables. They are not written to
@@ -350,7 +350,7 @@ reports or output metadata.
 ## Python API
 
 ```python
-from dockertriage import pull, verify_dest
+from srctriage import pull, verify_dest
 
 rootfs = pull("alpine:3.19", "./output")
 result = verify_dest(rootfs, image="alpine:3.19", quick=False)
@@ -384,7 +384,7 @@ CI checks include:
   are not yet supported.
 - Device and FIFO entries are skipped because creating them requires elevated
   privileges and they are not useful for ordinary filesystem inspection.
-- `dockertriage` extracts files. It is not a container runtime and does not run
+- `srctriage` extracts files. It is not a container runtime and does not run
   images.
 - Filtered extraction can intentionally omit files outside the selected path.
   The coverage report tells you what was outside the filter.
@@ -392,8 +392,8 @@ CI checks include:
 ## Development
 
 ```bash
-git clone https://github.com/m1r3dk/dockertriage.git
-cd dockertriage
+git clone https://github.com/m1r3dk/srctriage.git
+cd srctriage
 uv sync
 uv run pytest
 uv run ruff check src tests

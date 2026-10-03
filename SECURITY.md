@@ -15,7 +15,7 @@ Please include:
 
 - what an attacker can do, and what they need to start
 - a reference to an image that reproduces it, if one exists
-- the version (`dt --version`) and platform
+- the version (`st --version`) and platform
 
 Expect an acknowledgement within a week. This is a small project without a
 paid security team, so that is a best effort, not an SLA.

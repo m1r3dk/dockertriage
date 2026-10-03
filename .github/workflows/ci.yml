@@ -32,17 +32,17 @@ jobs:
       - name: Install the package
         run: pip install -e .
       - name: Core tests
-        run: python tests/test_dockertriage.py
+        run: python tests/test_srctriage.py
       - name: CLI tests
         run: python tests/test_cli.py
       - name: Smoke test the commands
         run: |
-          dt --version
-          dt --help
-          dt inspect alpine:3.19
-          dt inspect --digests alpine:3.19
+          st --version
+          st --help
+          st inspect alpine:3.19
+          st inspect --digests alpine:3.19
           # A filtered pull must keep the wanted path and nothing else.
-          dt pull alpine:3.19 --path /etc -d /tmp/filtered -q
+          st pull alpine:3.19 --path /etc -d /tmp/filtered -q
           test -d /tmp/filtered/etc || { echo "filter dropped /etc"; exit 1; }
           test ! -d /tmp/filtered/bin || { echo "filter kept /bin"; exit 1; }
 
@@ -116,7 +116,7 @@ jobs:
         run: mypy
 
   library-stays-light:
-    # typer is required for `dt`, but `import dockertriage` must not pay for
+    # typer is required for `st`, but `import srctriage` must not pay for
     # it. Guard that in CI rather than trusting review.
     runs-on: ubuntu-latest
     steps:
@@ -130,17 +130,17 @@ jobs:
         run: |
           python - <<'EOF'
           import sys
-          import dockertriage
+          import srctriage
           leaked = {"typer", "rich", "click"} & set(sys.modules)
           if leaked:
-              sys.exit(f"importing dockertriage dragged in {sorted(leaked)}")
+              sys.exit(f"importing srctriage dragged in {sorted(leaked)}")
           print("library import is dependency-free")
           EOF
       - name: Only cli.py may import a third-party package
         run: |
           python - <<'EOF'
           import ast, pathlib, sys
-          pkg = pathlib.Path("src/dockertriage")
+          pkg = pathlib.Path("src/srctriage")
           bad = {}
           for path in sorted(pkg.rglob("*.py")):
               if path.name == "cli.py":
@@ -151,7 +151,7 @@ jobs:
                       mods |= {a.name.split(".")[0] for a in n.names}
                   elif isinstance(n, ast.ImportFrom) and n.module and n.level == 0:
                       mods.add(n.module.split(".")[0])
-              extra = mods - set(sys.stdlib_module_names) - {"dockertriage"}
+              extra = mods - set(sys.stdlib_module_names) - {"srctriage"}
               if extra:
                   bad[path.name] = sorted(extra)
           if bad:
@@ -175,9 +175,9 @@ jobs:
       - name: The installed console script works
         run: |
           cd /tmp
-          dt --version
-          dt --help
-          python -c "import dockertriage; print(dockertriage.__version__)"
+          st --version
+          st --help
+          python -c "import srctriage; print(srctriage.__version__)"
           # Nothing generic may leak into site-packages.
           python - <<'EOF'
           import importlib.util, sys
@@ -193,7 +193,7 @@ jobs:
         run: |
           pip install mypy
           cd /tmp
-          printf 'from dockertriage import pull\nbad: int = pull("alpine:3.19", ".")\n' > probe.py
+          printf 'from srctriage import pull\nbad: int = pull("alpine:3.19", ".")\n' > probe.py
           # Capture rather than pipe: in a pipeline the exit status is tee's,
           # not mypy's, so `if mypy ... | tee` would always look successful.
           mypy probe.py > out.txt 2>&1 && status=0 || status=$?

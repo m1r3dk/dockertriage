@@ -67,7 +67,7 @@ def pull(
             wanted_paths.append(workdir)
         path_filter = PathFilter(wanted_paths) if wanted_paths else None
 
-        # Header mirrors `dt inspect`: name, then reference, then platform,
+        # Header mirrors `st inspect`: name, then reference, then platform,
         # each on its own line so a 71-character digest never wraps.
         log("")
         log(image.repo)
@@ -95,7 +95,7 @@ def pull(
         cache_dir = (
             os.path.join(dest, LAYER_CACHE_NAME)
             if keep_tar
-            else tempfile.mkdtemp(prefix="dockertriage-")
+            else tempfile.mkdtemp(prefix="srctriage-")
         )
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -166,7 +166,7 @@ def pull(
                     # error-dict plumbing is needed.
                     futures[i].result()
                     clear_progress()
-                    # Same row layout as `dt inspect`, so the two commands
+                    # Same row layout as `st inspect`, so the two commands
                     # describe a layer the same way.
                     log(
                         layer_row(
@@ -222,14 +222,14 @@ def pull(
             },
             "extracted": stats.as_dict(),
             # A census of the tree as it stands right now, so a later run of
-            # `dt verify` can tell a complete folder from one that lost files
+            # `st verify` can tell a complete folder from one that lost files
             # to a full disk, an interrupted copy, or a stray rm.
             "rootfs": scan_tree(dest).as_dict(),
             "layer_count": len(layers),
             "compressed_bytes": total_bytes,
             "verified_digests": bool(verify),
             # Present only for a filtered pull. Its absence means "whole image",
-            # which is what lets `dt verify` tell a partial tree from a broken
+            # which is what lets `st verify` tell a partial tree from a broken
             # one instead of calling every filtered pull incomplete.
             "filter": report.as_dict() if report else None,
             # Written last, so this key can only be true if every layer was

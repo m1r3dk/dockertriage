@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the CLI (dockertriage.cli).
+"""Tests for the CLI (srctriage.cli).
 
 Typer is a hard dependency, so nothing here is conditional.
 
@@ -22,10 +22,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import typer
 from typer.testing import CliRunner
 
-import dockertriage as core
-from dockertriage import batch as batch_mod
-from dockertriage import cli as cli_mod
-from dockertriage import puller as puller_mod
+import srctriage as core
+from srctriage import batch as batch_mod
+from srctriage import cli as cli_mod
+from srctriage import puller as puller_mod
 
 
 class TestTyperCLI(unittest.TestCase):
@@ -146,7 +146,7 @@ def quiet():
 
 
 class TestBareImageShortcut(unittest.TestCase):
-    """`dt alpine:3.19` should mean `dt pull alpine:3.19`."""
+    """`st alpine:3.19` should mean `st pull alpine:3.19`."""
 
     def setUp(self):
         self._real_pull = puller_mod.pull
@@ -220,14 +220,14 @@ class TestExitCodes(unittest.TestCase):
 
 
 class TestVerifyCommand(unittest.TestCase):
-    """`dt verify` is how a user answers "did all of them download?".
+    """`st verify` is how a user answers "did all of them download?".
 
     Everything here is filesystem-only: no network, no stubbed puller.
     """
 
     def setUp(self):
         self.runner = CliRunner()
-        self.root = tempfile.mkdtemp(prefix="dt-cli-verify-")
+        self.root = tempfile.mkdtemp(prefix="st-cli-verify-")
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def _make_image(self, folder, complete=True):
@@ -271,7 +271,7 @@ class TestVerifyCommand(unittest.TestCase):
         self.assertIn("redis:7", result.output)
 
     def test_failed_images_go_to_stdout_for_a_retry(self):
-        """Piping the failures back into `dt -f` must just work."""
+        """Piping the failures back into `st -f` must just work."""
         self._make_image("library_alpine_3.19")
         path = self._list_file(["alpine:3.19", "redis:7"])
         result = self.runner.invoke(
@@ -309,7 +309,7 @@ class TestVerifyCommand(unittest.TestCase):
         self.assertEqual(result.exit_code, 1)
 
     def test_verify_is_a_real_subcommand_not_an_image_name(self):
-        """`dt verify` must not be rewritten into `dt pull verify`."""
+        """`st verify` must not be rewritten into `st pull verify`."""
         with quiet():
             code = cli_mod.main(["verify", self.root])
         self.assertEqual(code, 1)  # empty dir, but it reached the command
@@ -357,7 +357,7 @@ class TestPullShowsItsVerification(unittest.TestCase):
 
     def setUp(self):
         self.runner = CliRunner()
-        self.root = tempfile.mkdtemp(prefix="dt-cli-pullverify-")
+        self.root = tempfile.mkdtemp(prefix="st-cli-pullverify-")
         self.addCleanup(shutil.rmtree, self.root, True)
         self._real = (puller_mod.RegistryClient, puller_mod.resolve_layers)
 
@@ -410,7 +410,7 @@ class TestPullShowsItsVerification(unittest.TestCase):
         self.assertIn("file count", result.output)
 
     def test_quiet_pull_prints_only_the_path(self):
-        """`$(dt alpine -q)` must stay a clean path, explanation or not."""
+        """`$(st alpine -q)` must stay a clean path, explanation or not."""
         result = self.runner.invoke(cli_mod.app, ["pull", "example/app:1.0", "-o", self.root, "-q"])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertNotIn("verifying", result.output)
@@ -423,7 +423,7 @@ class TestSingleEntryPoint(unittest.TestCase):
 
     def test_main_is_the_console_script_target(self):
         self.assertTrue(callable(cli_mod.main))
-        self.assertEqual(cli_mod.main.__module__, "dockertriage.cli")
+        self.assertEqual(cli_mod.main.__module__, "srctriage.cli")
 
     def test_package_exposes_no_rival_cli_module(self):
         import pathlib as _pathlib
@@ -498,7 +498,7 @@ class TestEveryCommandIsCallable(unittest.TestCase):
 
 
 class TestCoreStaysIndependent(unittest.TestCase):
-    """typer is required for `dt`, but not for `import dockertriage`.
+    """typer is required for `st`, but not for `import srctriage`.
 
     Someone embedding the library in their own tool should not pay for a CLI
     they never call, so the dependency stops at cli.py.
@@ -507,12 +507,10 @@ class TestCoreStaysIndependent(unittest.TestCase):
     def test_importing_the_library_does_not_import_typer(self):
         import subprocess
 
-        code = (
-            "import sys, dockertriage; sys.exit(1 if {'typer', 'rich'} & set(sys.modules) else 0)"
-        )
+        code = "import sys, srctriage; sys.exit(1 if {'typer', 'rich'} & set(sys.modules) else 0)"
         env = dict(os.environ, PYTHONPATH=os.path.dirname(os.path.dirname(core.__file__)))
         proc = subprocess.run([sys.executable, "-c", code], env=env)
-        self.assertEqual(proc.returncode, 0, "importing dockertriage pulled in typer/rich")
+        self.assertEqual(proc.returncode, 0, "importing srctriage pulled in typer/rich")
 
     def test_core_modules_import_no_typer(self):
         """Every core module, not just one file: the rule must survive a split."""
@@ -629,7 +627,7 @@ class TestFlagContract(unittest.TestCase):
 
 
 class TestBatchRouting(unittest.TestCase):
-    """`dt -f list.txt` must reach batch mode without naming the subcommand."""
+    """`st -f list.txt` must reach batch mode without naming the subcommand."""
 
     def test_bare_dash_f_routes_to_pull(self):
         seen = {}
@@ -744,10 +742,10 @@ class TestBatchRouting(unittest.TestCase):
 
 
 class TestSecretsRouting(unittest.TestCase):
-    """`dt secrets` must reach the command, not be read as an image name."""
+    """`st secrets` must reach the command, not be read as an image name."""
 
     def test_secrets_is_a_real_subcommand(self):
-        root = tempfile.mkdtemp(prefix="dt-cli-secrets-")
+        root = tempfile.mkdtemp(prefix="st-cli-secrets-")
         self.addCleanup(shutil.rmtree, root, True)
         out = os.path.join(root, "report")
         target = os.path.join(root, "tree")
@@ -760,7 +758,7 @@ class TestSecretsRouting(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(out, "findings.json")))
 
     def test_secrets_writes_during_the_scan_and_prints_per_image_counts(self):
-        root = tempfile.mkdtemp(prefix="dt-cli-secrets-progress-")
+        root = tempfile.mkdtemp(prefix="st-cli-secrets-progress-")
         self.addCleanup(shutil.rmtree, root, True)
         target = os.path.join(root, "images")
         out = os.path.join(root, "report")
@@ -811,7 +809,7 @@ class TestSecretsRouting(unittest.TestCase):
 
     def test_the_report_may_not_be_written_inside_the_scanned_tree(self):
         """Otherwise the next run finds its own output and reports it again."""
-        root = tempfile.mkdtemp(prefix="dt-cli-secrets2-")
+        root = tempfile.mkdtemp(prefix="st-cli-secrets2-")
         self.addCleanup(shutil.rmtree, root, True)
         with quiet():
             code = cli_mod.main(["secrets", root, "-o", os.path.join(root, "inside")])
@@ -826,7 +824,7 @@ class TestSecretsRouting(unittest.TestCase):
 class TestHelpfulEmptyInvocations(unittest.TestCase):
     """Running a command with no arguments should teach, not scold.
 
-    `dt pull` used to print a red 'Invalid value' error, which reads as a
+    `st pull` used to print a red 'Invalid value' error, which reads as a
     crash for what is really just an unfinished command.
     """
 

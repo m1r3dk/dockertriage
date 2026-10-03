@@ -30,7 +30,7 @@ jobs:
           python - <<'EOF'
           import os, pathlib, re, sys
           tag = os.environ["GITHUB_REF_NAME"].lstrip("v")
-          src = pathlib.Path("src/dockertriage/version.py").read_text()
+          src = pathlib.Path("src/srctriage/version.py").read_text()
           pkg = re.search(r'__version__\s*=\s*"([^"]+)"', src).group(1)
           if tag != pkg:
               sys.exit(f"tag v{tag} does not match __version__ {pkg}")
@@ -41,7 +41,7 @@ jobs:
         run: |
           pip install dist/*.whl
           cd /tmp
-          dt --version
+          st --version
 
       - uses: actions/upload-artifact@v7
         with:

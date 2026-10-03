@@ -3,9 +3,9 @@
 A presentation layer only: every behaviour it exposes is implemented in the
 core modules, which stay importable without ever touching this file.
 
-    dt alpine:3.19            # pull is implied
-    dt inspect python:3.12-slim
-    dt inspect --digests alpine:3.19
+    st alpine:3.19            # pull is implied
+    st inspect python:3.12-slim
+    st inspect --digests alpine:3.19
 """
 
 import json
@@ -37,7 +37,7 @@ from .registry import RegistryClient
 from .version import __version__
 
 app = typer.Typer(
-    name="dockertriage",
+    name="srctriage",
     help="Download a Docker image and extract its full rootfs to a folder.",
     add_completion=False,
     no_args_is_help=True,
@@ -65,7 +65,7 @@ def _fail(message: str, code: int = 1) -> typer.Exit:
 
 def _version_callback(value: bool) -> None:
     if value:
-        stdout.print(f"dt {__version__}")
+        stdout.print(f"st {__version__}")
         raise typer.Exit()
 
 
@@ -219,7 +219,7 @@ def pull(
 
     # Typer releases disagree about the exit status produced by
     # ``no_args_is_help``.  Handle the unfinished command ourselves so
-    # ``dt pull`` consistently teaches the syntax while still reporting a
+    # ``st pull`` consistently teaches the syntax while still reporting a
     # usage error to scripts on every supported Python version.
     if image is None and list_file is None:
         _exit_code = 2
@@ -298,7 +298,7 @@ def pull(
         if not quiet:
             console.print(f"[green]verified: {outcome.summary()}[/green]")
 
-    # Plain stdout so `$(dt pull alpine -q)` stays scriptable.
+    # Plain stdout so `$(st pull alpine -q)` stays scriptable.
     print(dest_path)
 
 
@@ -480,7 +480,7 @@ def verify_cmd(
     console.print(f"[{colour}]{verified}/{len(results)} images verified[/{colour}]")
 
     # Failed images go to stdout so the list can be piped straight back in:
-    #   dt verify -f images.txt --failed-only -q > retry.txt && dt -f retry.txt
+    #   st verify -f images.txt --failed-only -q > retry.txt && st -f retry.txt
     for r in bad:
         print(r.image)
 
@@ -576,7 +576,7 @@ def secrets_cmd(
             stdout.print(f"[red]missing[/red]    {item.name:<12} install with: {item.install_hint}")
         return
 
-    # `dt secrets` with no argument means the obvious thing: a batch just
+    # `st secrets` with no argument means the obvious thing: a batch just
     # wrote ./output, so scan that; otherwise scan where the user is.
     if target is None:
         target = Path(BATCH_OUTPUT_DIR) if os.path.isdir(BATCH_OUTPUT_DIR) else Path(".")
@@ -764,7 +764,7 @@ def _print_inspect(ref, layers, config: dict, target_os: str, target_arch: str) 
     # fixed width except the last, so computing the remaining space directly
     # is simpler than persuading a table layout to do it, and it guarantees
     # the step text is truncated to fit instead of running off the edge.
-    # The widths come from humanize so `dt pull` draws its rows identically.
+    # The widths come from humanize so `st pull` draws its rows identically.
     width = max(60, min(stdout.width, 120))
     step_w = width - (INDEX_W + SIZE_W + BAR_W + 4)  # 4 = single spaces between
 
@@ -810,7 +810,7 @@ def _print_inspect(ref, layers, config: dict, target_os: str, target_arch: str) 
     workdir = coverage.working_dir(config)
     if workdir:
         stdout.print(
-            f"[dim]{'workdir':<11}[/dim][cyan]{workdir}[/cyan] [dim]-> dt pull --app[/dim]"
+            f"[dim]{'workdir':<11}[/dim][cyan]{workdir}[/cyan] [dim]-> st pull --app[/dim]"
         )
     else:
         stdout.print(f"[dim]{'workdir':<11}not set by this image[/dim]")
@@ -820,8 +820,8 @@ def _print_inspect(ref, layers, config: dict, target_os: str, target_arch: str) 
 def main(args: list[str] | None = None) -> int:
     """Run the Typer app and return an exit code instead of raising SystemExit.
 
-    `dt alpine:3.19` with no subcommand is treated as `dt pull alpine:3.19`,
-    so the common case stays one word shorter. `dt -f images.txt` gets the
+    `st alpine:3.19` with no subcommand is treated as `st pull alpine:3.19`,
+    so the common case stays one word shorter. `st -f images.txt` gets the
     same treatment: batch mode is a `pull` with a list instead of one image,
     and requiring the subcommand there would be a pointless distinction.
     """

@@ -58,7 +58,7 @@ class Finding:
     source: str = "filesystem"
     line: int = 0
     context: str = ""
-    engine: str = "dockertriage"
+    engine: str = "srctriage"
     verified: bool | None = None
     image: str = ""
     # What the engine said about its own match. Kept because `confidence`
@@ -1264,14 +1264,14 @@ def _drop_commented_out(findings: list[Finding], root: str, cov: ScanCoverage) -
 
 
 def discover_targets(path: str) -> list[str]:
-    """Decide what `dt secrets <path>` should scan.
+    """Decide what `st secrets <path>` should scan.
 
     Three shapes are all reasonable to point at, and guessing wrong either
     misses images or scans one tree as if it were many:
 
     * an extracted image, recognised by its `.image.json`
     * a parent of extracted images, the usual `output/` from a batch
-    * any other directory, scanned whole, which is what `dt secrets .` means
+    * any other directory, scanned whole, which is what `st secrets .` means
       when the working directory is a checkout rather than a pull
     """
     root = os.path.abspath(path)

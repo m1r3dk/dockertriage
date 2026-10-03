@@ -3,7 +3,7 @@
 No daemon, no root, no dependencies. The public API is what this module
 re-exports; everything else is an implementation detail and may move.
 
-    from dockertriage import pull
+    from srctriage import pull
     dest = pull("alpine:3.19", "./out")
 """
 

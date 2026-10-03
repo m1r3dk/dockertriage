@@ -434,7 +434,7 @@ def _write_skip_list(skipped: list[BatchResult], out_dir: str, log) -> str | Non
 
     A count is not actionable on its own; the names are. Written as a
     plain list with the reason as a trailing comment, so the file is both
-    readable and directly re-feedable to `dt -f` once the repos come back.
+    readable and directly re-feedable to `st -f` once the repos come back.
     """
     if not skipped:
         return None
@@ -443,7 +443,7 @@ def _write_skip_list(skipped: list[BatchResult], out_dir: str, log) -> str | Non
         os.makedirs(out_dir, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("# Images that could not be downloaded, and why.\n")
-            fh.write("# Re-runnable with: dt -f this-file\n")
+            fh.write("# Re-runnable with: st -f this-file\n")
             for r in sorted(skipped, key=lambda x: x.image):
                 reason = (r.error or "").removeprefix("skipped: ")
                 fh.write(f"{r.image}  # {reason}\n")

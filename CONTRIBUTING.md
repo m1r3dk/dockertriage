@@ -11,10 +11,10 @@ Security problems go through [SECURITY.md](SECURITY.md), not a public issue.
 These are the constraints that define the product. A change that breaks one
 of them is a different tool, so each is enforced by CI rather than by review:
 
-1. Every module under `src/dockertriage/` except `cli.py` stays Python 3.14+
-   standard library only, and `import dockertriage` must not pull in Typer.
+1. Every module under `src/srctriage/` except `cli.py` stays Python 3.14+
+   standard library only, and `import srctriage` must not pull in Typer.
    Someone embedding the library should not pay for a CLI they never call.
-2. `src/dockertriage/cli.py` is the only module allowed third-party imports,
+2. `src/srctriage/cli.py` is the only module allowed third-party imports,
    and it is the only CLI. There used to be two, kept in sync by hand, and
    they drifted. Do not add a second one.
 3. No Docker daemon, no root. The tool must run anywhere with nothing
@@ -28,8 +28,8 @@ of them is a different tool, so each is enforced by CI rather than by review:
 ## Getting set up
 
 ```bash
-git clone https://github.com/m1r3dk/dockertriage
-cd dockertriage
+git clone https://github.com/m1r3dk/srctriage
+cd srctriage
 uv sync                    # installs the package plus the dev group
 uv run pytest tests/       # should be green before you change anything
 ```
@@ -41,7 +41,7 @@ to be installed before the tests can import it.
 
 ```bash
 uv run pytest tests/                        # everything
-uv run python tests/test_dockertriage.py    # library modules
+uv run python tests/test_srctriage.py    # library modules
 uv run python tests/test_cli.py             # the CLI
 ```
 
