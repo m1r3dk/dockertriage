@@ -4,6 +4,7 @@ A presentation layer only: every behaviour it exposes is implemented in the
 core modules, which stay importable without ever touching this file.
 
     st alpine:3.19            # pull is implied
+    st github.com/owner/repo  # a GitHub repository, same command
     st inspect python:3.12-slim
     st inspect --digests alpine:3.19
 """
@@ -18,7 +19,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import batch, coverage, puller, secretreport, secrets
+from . import batch, coverage, github, puller, secretreport, secrets
 from . import verify as verify_core
 from .constants import BATCH_OUTPUT_DIR
 from .humanize import (
@@ -32,13 +33,13 @@ from .humanize import (
     size_bar,
 )
 from .manifest import resolve_layers
-from .reference import parse_image
+from .reference import is_repo_ref, parse_image
 from .registry import RegistryClient
 from .version import __version__
 
 app = typer.Typer(
     name="srctriage",
-    help="Download a Docker image and extract its full rootfs to a folder.",
+    help="Download container images and GitHub repositories to a folder, then triage them.",
     add_completion=False,
     no_args_is_help=True,
     rich_markup_mode="rich",
@@ -80,7 +81,7 @@ def _root(
         help="Show version and exit.",
     ),
 ) -> None:
-    """Pull container images without Docker, a daemon, or root."""
+    """Pull container images and GitHub repositories without Docker, a daemon, or root."""
 
 
 def _split_platform(platform: str | None, os_name: str, arch: str) -> tuple[str, str]:
@@ -99,14 +100,15 @@ def pull(
     ctx: typer.Context,
     image: str | None = typer.Argument(
         None,
-        help="alpine:3.19 | nginx@sha256:... | https://hub.docker.com/r/org/repo",
+        help="alpine:3.19 | nginx@sha256:... | https://hub.docker.com/r/org/repo | "
+        "github.com/owner/repo[@ref] | gh:owner/repo",
         show_default=False,
     ),
     list_file: Path | None = typer.Option(
         None,
         "--file",
         "-f",
-        help="File of image references, one per line ([cyan]-[/cyan] for stdin).",
+        help="File of image or repository references, one per line ([cyan]-[/cyan] for stdin).",
     ),
     output: Path | None = typer.Option(
         None,
@@ -135,7 +137,7 @@ def pull(
         "-c",
         min=1,
         max=32,
-        help="Images pulled at once when using [cyan]--file[/cyan].",
+        help="References pulled at once when using [cyan]--file[/cyan].",
     ),
     report: Path | None = typer.Option(
         None,
@@ -173,7 +175,7 @@ def pull(
         [],
         "--path",
         "-P",
-        help="Keep only this path from the image. Repeatable, e.g. "
+        help="Keep only this path from the image or repository. Repeatable, e.g. "
         "[cyan]-P /app -P /etc/nginx[/cyan].",
     ),
     app: bool = typer.Option(
@@ -204,7 +206,7 @@ def pull(
         True,
         "--check-access/--no-check-access",
         "-A/-N",
-        help="Before pulling, find which images are private, deleted, or taken down.",
+        help="Before pulling, find which references are private, deleted, or taken down.",
     ),
     deep: bool = typer.Option(
         False,
@@ -212,9 +214,23 @@ def pull(
         "-D",
         help="Make [cyan]--check[/cyan] re-count the whole extracted tree.",
     ),
+    history: bool = typer.Option(
+        False,
+        "--history",
+        "-H",
+        help="For GitHub repositories, also keep the full git history so "
+        "[cyan]st secrets[/cyan] finds credentials deleted in later commits "
+        "[dim](needs git)[/dim].",
+    ),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress output."),
 ) -> None:
-    """Download one image, or every image in a file, and extract the rootfs."""
+    """Download one image or repository, or every one in a file, to a folder.
+
+    An image becomes its merged root filesystem. A GitHub repository becomes
+    its working tree at the default branch or the given [cyan]@ref[/cyan],
+    downloaded as one archive, so git is only needed for
+    [cyan]--history[/cyan]. Set [cyan]GITHUB_TOKEN[/cyan] for private repos.
+    """
     global _exit_code
 
     # Typer releases disagree about the exit status produced by
@@ -257,10 +273,13 @@ def pull(
             verify_pulls=check,
             deep_verify=deep,
             check_access=check_access,
+            history=history,
         )
         return
 
     assert image is not None
+    if history and not is_repo_ref(image):
+        raise _fail("--history applies to GitHub repositories, not images", 2)
     try:
         # `dest_path` rather than `path`: the --path option owns that name now.
         dest_path = puller.pull(
@@ -276,6 +295,7 @@ def pull(
             strict_tag=strict_tag,
             paths=path,
             use_workdir=app,
+            history=history,
         )
     except KeyboardInterrupt:
         _exit_code = 130
@@ -363,14 +383,15 @@ def _pull_batch(list_file: Path, output: Path, report: Path | None, **options: A
 def verify_cmd(
     target: Path | None = typer.Argument(
         None,
-        help="Folder holding the extracted images [dim](default: ./output)[/dim].",
+        help="Folder holding the downloaded images and repositories "
+        "[dim](default: ./output)[/dim].",
         show_default=False,
     ),
     list_file: Path | None = typer.Option(
         None,
         "--file",
         "-f",
-        help="The image list that was pulled, so images that never arrived are caught.",
+        help="The list that was pulled, so references that never arrived are caught.",
     ),
     deep: bool = typer.Option(
         False,
@@ -388,14 +409,14 @@ def verify_cmd(
         False,
         "--failed-only",
         "-F",
-        help="Print only the images that did not verify.",
+        help="Print only the references that did not verify.",
     ),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress the table."),
 ) -> None:
-    """Confirm downloaded images are complete, and say which ones are not.
+    """Confirm downloads are complete, and say which ones are not.
 
     With [cyan]--file[/cyan] the answer starts from the list you asked for,
-    so an image that was never downloaded is reported as missing instead of
+    so a reference that was never downloaded is reported as missing instead of
     quietly not being counted. Without it, every folder present is checked.
     """
     global _exit_code
@@ -407,7 +428,7 @@ def verify_cmd(
         except OSError as exc:
             raise _fail(str(exc)) from None
         if not images:
-            raise _fail(f"no image references found in {list_file}")
+            raise _fail(f"no references found in {list_file}")
         results = verify_core.verify_list(images, out_dir, quick=not deep)
     else:
         try:
@@ -415,7 +436,7 @@ def verify_cmd(
         except OSError as exc:
             raise _fail(str(exc)) from None
         if not results:
-            raise _fail(f"no extracted images found in {out_dir}")
+            raise _fail(f"no downloaded images or repositories found in {out_dir}")
 
     bad = [r for r in results if not r.ok]
 
@@ -436,7 +457,8 @@ def verify_cmd(
     shown = bad if failed_only else results
     if not quiet and shown:
         console.print(
-            f"\n[bold]{len(results)} images[/bold] [dim]({'deep' if deep else 'quick'} check)[/dim]"
+            f"\n[bold]{len(results)} downloads[/bold] "
+            f"[dim]({'deep' if deep else 'quick'} check)[/dim]"
         )
         table = Table.grid(padding=(0, 2))
         table.add_column(width=6)
@@ -446,7 +468,7 @@ def verify_cmd(
         table.add_column(overflow="fold")
         table.add_row(
             "[dim]state[/dim]",
-            "[dim]image[/dim]",
+            "[dim]reference[/dim]",
             "[dim]status[/dim]",
             "[dim]checks[/dim]",
             "[dim]detail[/dim]",
@@ -468,7 +490,7 @@ def verify_cmd(
                 if c.name not in names:
                     names.append(c.name)
         if names:
-            console.print("[dim]checks performed per image:[/dim]")
+            console.print("[dim]checks performed per download:[/dim]")
             width = max(len(n) for n in names)
             for name in names:
                 why = verify_core.CHECK_HELP.get(name, "")
@@ -477,7 +499,7 @@ def verify_cmd(
 
     verified = len(results) - len(bad)
     colour = "green" if not bad else "red"
-    console.print(f"[{colour}]{verified}/{len(results)} images verified[/{colour}]")
+    console.print(f"[{colour}]{verified}/{len(results)} verified[/{colour}]")
 
     # Failed images go to stdout so the list can be piped straight back in:
     #   st verify -f images.txt --failed-only -q > retry.txt && st -f retry.txt
@@ -493,7 +515,7 @@ def verify_cmd(
 def secrets_cmd(
     target: Path | None = typer.Argument(
         None,
-        help="Extracted image, a folder of them, or any directory "
+        help="A downloaded image or repository, a folder of them, or any directory "
         "[dim](default: ./output, then .)[/dim].",
         show_default=False,
     ),
@@ -520,14 +542,14 @@ def secrets_cmd(
         600.0,
         "--timeout",
         "-t",
-        help="Seconds any one engine may run against one image.",
+        help="Seconds any one engine may run against one target.",
     ),
     include_vendor: bool = typer.Option(
         False,
         "--include-vendor/--no-include-vendor",
         "-V",
         help="Also search [cyan]node_modules[/cyan], virtualenvs and package caches "
-        "[dim](55% of findings, none rotatable, measured over 89 images)[/dim].",
+        "[dim](55% of findings in images, none rotatable, measured over 89 images)[/dim].",
     ),
     exclude: list[str] = typer.Option(
         [],
@@ -557,11 +579,13 @@ def secrets_cmd(
         help="Show which scanners are installed, then exit.",
     ),
 ) -> None:
-    """Collect every credential in an extracted image into one folder.
+    """Collect every credential in a downloaded image or repository into one folder.
 
-    Reads all three places a container leaks from: the image config's
+    For an image, reads all three places a container leaks from: the config's
     baked-in [cyan]ENV[/cyan], credential files like [cyan].env[/cyan] and
-    [cyan]~/.aws/credentials[/cyan], and application source.
+    [cyan]~/.aws/credentials[/cyan], and application source. For a repository
+    pulled with [cyan]--history[/cyan], every commit on every branch is
+    scanned too, so a credential deleted later is still found.
 
     Values are written [bold]in the clear[/bold] so they can be rotated
     immediately, so treat the output folder as the credentials themselves.
@@ -668,13 +692,13 @@ def _print_secret_findings(scan: secrets.SecretScan, show: int) -> None:
             "high": "yellow",
             "medium": "cyan",
         }.get(finding.severity, "white")
-        where = finding.path + (f":{finding.line}" if finding.line else "")
         # The secret is the point, so it gets the room; the location is
         # truncated instead when the line would wrap.
         secret = one_line(finding.secret, max(20, width - 40))
         console.print(f"[{colour}]{finding.severity:<8}[/{colour}] {secret}")
         mark = " [green](verified live)[/green]" if finding.verified else ""
-        console.print(f"[dim]         {one_line(where, width - 10)}  {finding.rule}[/dim]{mark}")
+        where = one_line(finding.location, width - 10)
+        console.print(f"[dim]         {where}  {finding.rule}[/dim]{mark}")
     remaining = len(scan.findings) - len(top)
     if remaining > 0:
         console.print(f"[dim]... and {remaining} more in the report[/dim]")
@@ -683,7 +707,9 @@ def _print_secret_findings(scan: secrets.SecretScan, show: int) -> None:
 
 @app.command()
 def inspect(
-    image: str = typer.Argument(..., help="Image reference to inspect.", show_default=False),
+    image: str = typer.Argument(
+        ..., help="Image or GitHub repository to inspect.", show_default=False
+    ),
     platform: str | None = typer.Option(
         None, "--platform", "-p", help="Target platform as os/arch."
     ),
@@ -693,7 +719,8 @@ def inspect(
         False,
         "--digests",
         "-D",
-        help="Print layer digests one per line for scripting, instead of the table.",
+        help="Print layer digests one per line for scripting, instead of the table "
+        "(for a repository, the commit sha).",
     ),
     no_budget_check: bool = typer.Option(
         False,
@@ -708,14 +735,20 @@ def inspect(
         help="Fail if [cyan]latest[/cyan] is missing instead of using the newest tag.",
     ),
 ) -> None:
-    """Show an image's layers and size without downloading them.
+    """Show an image's layers, or a repository's details, without downloading.
 
     By default this prints a table of layer sizes and build commands for a
     human to read. Pass [cyan]--digests[/cyan] to print just the layer
     digests, one per line, which is easy to pipe into another command.
     """
+    if is_repo_ref(image):
+        _inspect_repo(image, digests)
+        return
     target_os, target_arch = _split_platform(platform, os_name, arch)
-    ref = parse_image(image)
+    try:
+        ref = parse_image(image)
+    except ValueError as exc:
+        raise _fail(str(exc), 2) from None
     client = RegistryClient(ref)
     try:
         found, config = resolve_layers(client, target_os, target_arch, strict_tag)
@@ -731,6 +764,31 @@ def inspect(
         return
 
     _print_inspect(ref, found, config, target_os, target_arch)
+
+
+def _inspect_repo(reference: str, digests: bool) -> None:
+    """The repository half of `inspect`: metadata, or the commit for scripts."""
+    try:
+        if digests:
+            print(github.resolve_commit(reference))
+            return
+        info = github.describe(reference)
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise _fail(str(exc)) from None
+    stdout.print(f"\n[bold]{info['repository']}[/bold]")
+    stdout.print(f"[dim]@[/dim][cyan]{info['ref']}[/cyan]")
+    stdout.print(f"[dim]{info['visibility']}[/dim]\n")
+    for label, value in (
+        ("about", info["description"]),
+        ("language", info["language"]),
+        ("size", human_bytes(int(info["size_kb"]) * 1024) if info["size_kb"] else ""),
+        ("pushed", info["pushed_at"]),
+        ("archived", "yes" if info["archived"] else ""),
+        ("clone", info["clone_url"]),
+    ):
+        if value:
+            stdout.print(f"[dim]{label:<11}[/dim]{value}")
+    stdout.print(f"\n[dim]-> st {reference} --history, then st secrets[/dim]\n")
 
 
 # A colour per build verb. Layers that add content are the ones worth finding

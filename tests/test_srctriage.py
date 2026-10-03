@@ -1236,7 +1236,7 @@ class TestBatchVerifiesWhatItPulled(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             batch_mod.pull_many(["a"], self.root, check_budget=False, check_access=False)
         text = err.getvalue()
-        self.assertIn("verifying each image (quick)", text)
+        self.assertIn("verifying each download (quick)", text)
         self.assertIn("pull marked complete", text)
 
     def test_deep_batch_says_it_is_deep_and_what_that_means(self):
@@ -1247,7 +1247,7 @@ class TestBatchVerifiesWhatItPulled(unittest.TestCase):
                 ["a"], self.root, check_budget=False, deep_verify=True, check_access=False
             )
         text = err.getvalue()
-        self.assertIn("verifying each image (deep)", text)
+        self.assertIn("verifying each download (deep)", text)
         self.assertIn("re-walked", text)
 
     def test_each_ok_line_carries_the_evidence_behind_it(self):
@@ -1657,7 +1657,7 @@ class TestBatchSkipsUnreachableImages(unittest.TestCase):
             batch_mod.pull_many(names, self.root, check_budget=False)
         text = err.getvalue()
         self.assertIn("1/3 accessible, 2 not", text)
-        self.assertIn("2 of 3 images were never downloadable", text)
+        self.assertIn("2 of 3 references were never downloadable", text)
 
     def test_the_names_are_written_to_a_file(self):
         """A count alone is not actionable; the list is."""

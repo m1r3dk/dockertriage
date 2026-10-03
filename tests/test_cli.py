@@ -324,7 +324,7 @@ class TestVerifyCommand(unittest.TestCase):
         """A count with no names is still asking the user to take it on faith."""
         self._make_image("library_alpine_3.19")
         result = self.runner.invoke(cli_mod.app, ["verify", self.root])
-        self.assertIn("checks performed per image", result.output)
+        self.assertIn("checks performed per download", result.output)
         self.assertIn("pull completed", result.output)
 
     def test_the_legend_covers_every_check_that_ran(self):

@@ -18,11 +18,12 @@ import os
 from collections.abc import Iterable
 from typing import Any
 
-from .constants import IMAGE_META_NAME, LAYER_CACHE_NAME
-from .reference import parse_image
+from .constants import HISTORY_DIR_NAME, IMAGE_META_NAME, LAYER_CACHE_NAME
+from .reference import folder_name_for
 
-# Bookkeeping we wrote ourselves; it is not part of the image's filesystem.
-_TOP_LEVEL_SKIP = {IMAGE_META_NAME, LAYER_CACHE_NAME}
+# Bookkeeping we wrote ourselves; it is not part of the image's filesystem
+# or the repository's tree.
+_TOP_LEVEL_SKIP = {IMAGE_META_NAME, LAYER_CACHE_NAME, HISTORY_DIR_NAME}
 
 
 @dataclasses.dataclass
@@ -88,6 +89,22 @@ def read_record(dest: str) -> dict[str, Any] | None:
     except OSError, ValueError:
         return None
     return data if isinstance(data, dict) else None
+
+
+def write_record(dest: str, meta: dict[str, Any]) -> None:
+    """Write `.image.json` atomically.
+
+    Verification treats this file's presence as proof the pull finished, so a
+    half-written one would be a lie. Write to a sibling temp file and rename,
+    which is atomic on every platform we target.
+    """
+    final = os.path.join(dest, IMAGE_META_NAME)
+    tmp = final + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(meta, fh, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, final)
 
 
 @dataclasses.dataclass
@@ -333,7 +350,7 @@ def verify_list(images: Iterable[str], out_dir: str, quick: bool = False) -> lis
         if not ref:
             continue
         try:
-            folder = parse_image(ref).folder_name
+            folder = folder_name_for(ref)
         except ValueError as exc:
             results.append(VerifyResult(image=ref, dest="", status="missing", problems=[str(exc)]))
             continue

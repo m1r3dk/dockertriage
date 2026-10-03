@@ -1,10 +1,11 @@
-"""Pull one image and leave a merged rootfs on disk.
+"""Pull one image, or one GitHub repository, and leave its files on disk.
 
 Layers download in parallel but extract strictly in order, so a later
 layer's whiteouts always land on the base they were built against.
+Repositories are handed to `github.pull_repo`, so one entry point serves
+the CLI and the batch whatever the reference names.
 """
 
-import json
 import os
 import shutil
 import sys
@@ -14,14 +15,14 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
-from . import coverage
-from .constants import IMAGE_META_NAME, LAYER_CACHE_NAME
+from . import coverage, github
+from .constants import LAYER_CACHE_NAME
 from .extract import ExtractStats, PathFilter, extract_layer, open_layer_stream
 from .humanize import INDEX_W, SIZE_W, human_bytes, layer_row, short_digest, size_bar
 from .manifest import resolve_layers
-from .reference import parse_image
+from .reference import is_repo_ref, parse_image
 from .registry import RegistryClient
-from .verify import scan_tree
+from .verify import scan_tree, write_record
 
 
 def pull(
@@ -38,7 +39,27 @@ def pull(
     paths: Sequence[str] | None = None,
     use_workdir: bool = False,
     on_progress: Callable[[int, int], None] | None = None,
+    history: bool = False,
 ) -> str:
+    """Pull `image_input` into `out_dir` and return the folder it wrote.
+
+    A GitHub reference downloads the repository instead; the image-only
+    options (platform, layers, --app) do not apply to it, and `history`
+    applies only to it.
+    """
+    if is_repo_ref(image_input):
+        if use_workdir:
+            raise ValueError("--app reads an image's WorkingDir; use --path for a repository")
+        return github.pull_repo(
+            image_input,
+            out_dir,
+            quiet=quiet,
+            dest_override=dest_override,
+            paths=paths,
+            history=history,
+            on_progress=on_progress,
+        )
+
     started = time.time()
 
     def log(msg: str) -> None:
@@ -236,7 +257,7 @@ def pull(
             # downloaded, verified and extracted.
             "complete": True,
         }
-        _write_record(dest, meta)
+        write_record(dest, meta)
 
         log("")
         log(f"{stats}")
@@ -248,19 +269,3 @@ def pull(
         return dest
     finally:
         client.close()
-
-
-def _write_record(dest: str, meta: dict) -> None:
-    """Write `.image.json` atomically.
-
-    Verification treats this file's presence as proof the pull finished, so a
-    half-written one would be a lie. Write to a sibling temp file and rename,
-    which is atomic on every platform we target.
-    """
-    final = os.path.join(dest, IMAGE_META_NAME)
-    tmp = final + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(meta, fh, indent=2)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, final)

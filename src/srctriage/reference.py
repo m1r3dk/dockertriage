@@ -1,9 +1,11 @@
-"""Turn what a user types into a registry coordinate.
+"""Turn what a user types into a registry coordinate or a GitHub repository.
 
 Accepts bare names, tags, digests and the web URLs people actually copy out
 of a browser, because those are what land in an image list.
 """
 
+import dataclasses
+import re
 import urllib.parse
 
 from .constants import DOCKERHUB_REGISTRY, ECR_PUBLIC_REGISTRY
@@ -175,3 +177,102 @@ def _parse_url(url: str) -> ImageRef:
         return ImageRef("ecr_public", ECR_PUBLIC_REGISTRY, repo, ref, is_digest=_is_digest(ref))
 
     raise ValueError(f"unsupported registry host: {host or url}")
+
+
+# ---------------------------------------------------------------------------
+# GitHub repositories. Parsed here, beside images, so anything that maps a
+# reference to its folder (verify, batch) needs one import and no network.
+# ---------------------------------------------------------------------------
+
+# GitHub's own rules for owner and repository names.
+_GH_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+@dataclasses.dataclass(frozen=True)
+class RepoRef:
+    owner: str
+    name: str
+    # Branch, tag or commit. None means the default branch.
+    ref: str | None = None
+
+    @property
+    def slug(self) -> str:
+        return f"{self.owner}/{self.name}"
+
+    @property
+    def pretty(self) -> str:
+        """github.com/owner/repo[@ref], the form recorded and reported."""
+        return f"github.com/{self.slug}" + (f"@{self.ref}" if self.ref else "")
+
+    @property
+    def folder_name(self) -> str:
+        base = f"github_{self.owner}_{self.name}"
+        if not self.ref:
+            return base
+        safe_ref = "".join(c if c.isalnum() or c in "_.-" else "_" for c in self.ref)
+        return f"{base}_{safe_ref[:32]}"
+
+
+def is_repo_ref(raw: str) -> bool:
+    """True when `raw` names a GitHub repository rather than an image.
+
+    Unambiguous by construction: no registry is called github.com (GitHub's
+    is ghcr.io), and `gh:` cannot start an image reference.
+    """
+    s = (raw or "").strip().lower()
+    if s.startswith(("gh:", "git@github.com:")):
+        return True
+    return s.split("://", 1)[-1].startswith(("github.com/", "www.github.com/"))
+
+
+def parse_repo(raw: str) -> RepoRef:
+    """Accept the forms people paste for a repository.
+
+    gh:owner/repo, github.com/owner/repo, https://github.com/owner/repo.git,
+    git@github.com:owner/repo.git, browser links to /tree/<ref>,
+    /commit/<sha> and /releases/tag/<tag>, and an `@ref` suffix on any of
+    them. A link into a folder (/tree/main/src) is refused rather than
+    guessed at, because `main/src` is also a valid branch name.
+    """
+    s = (raw or "").strip()
+    low = s.lower()
+    if low.startswith("gh:"):
+        rest = s[3:]
+    elif low.startswith("git@github.com:"):
+        rest = s[len("git@github.com:") :]
+    else:
+        rest = urllib.parse.urlparse(s if "://" in s else "https://" + s).path
+    rest = rest.strip().strip("/")
+
+    ref: str | None = None
+    if "@" in rest:
+        rest, ref = rest.split("@", 1)
+        ref = ref.strip() or None
+    parts = [p for p in rest.split("/") if p]
+    if len(parts) < 2:
+        raise ValueError(f"GitHub reference must name owner/repo, got {raw!r}")
+    owner, name = parts[0], parts[1].removesuffix(".git")
+    tail = parts[2:]
+    if tail:
+        if ref is not None:
+            raise ValueError(f"give the ref once, either as @ref or in the URL path: {raw!r}")
+        if tail[0] in ("tree", "commit") and len(tail) == 2:
+            ref = tail[1]
+        elif tail[:2] == ["releases", "tag"] and len(tail) == 3:
+            ref = tail[2]
+        elif tail[0] == "tree" and len(tail) > 2:
+            raise ValueError(
+                f"{raw!r} points into a folder, and the branch name is ambiguous. "
+                f"Use github.com/{owner}/{name}@<ref> with --path <folder>."
+            )
+        else:
+            raise ValueError(f"unsupported GitHub URL path: /{'/'.join(tail)}")
+    for part in (owner, name):
+        if not _GH_NAME.match(part):
+            raise ValueError(f"not a valid GitHub owner or repository name: {part!r}")
+    return RepoRef(owner, name, ref)
+
+
+def folder_name_for(raw: str) -> str:
+    """The folder a pull of `raw` writes, image or repository."""
+    return parse_repo(raw).folder_name if is_repo_ref(raw) else parse_image(raw).folder_name

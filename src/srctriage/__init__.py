@@ -1,10 +1,11 @@
-"""Download a Docker image and extract its full rootfs to a folder.
+"""Download container images and GitHub repositories to a folder, then triage them.
 
 No daemon, no root, no dependencies. The public API is what this module
 re-exports; everything else is an implementation detail and may move.
 
     from srctriage import pull
-    dest = pull("alpine:3.19", "./out")
+    dest = pull("alpine:3.19", "./out")              # merged rootfs
+    repo = pull("github.com/octocat/Hello-World", "./out")  # working tree
 """
 
 from .batch import BatchResult, pull_many, read_image_list
@@ -16,11 +17,12 @@ from .extract import (
     safe_join,
     safe_relpath,
 )
+from .github import pull_repo
 from .manifest import Layer, pick_platform_manifest, resolve_layers
 from .preflight import AccessResult, check_access, check_many
 from .puller import pull
 from .ratelimit import RateBudget, check_rate_budget
-from .reference import ImageRef, parse_image
+from .reference import ImageRef, RepoRef, is_repo_ref, parse_image, parse_repo
 from .registry import RateLimited, RegistryClient
 from .secretreport import DEFAULT_OUTPUT_DIR, write_report
 from .secrets import (
@@ -59,6 +61,7 @@ __all__ = [
     "RateBudget",
     "RateLimited",
     "RegistryClient",
+    "RepoRef",
     "ScanCoverage",
     "ScanResult",
     "SecretScan",
@@ -71,12 +74,15 @@ __all__ = [
     "check_rate_budget",
     "discover_targets",
     "extract_layer",
+    "is_repo_ref",
     "newest_tag",
     "open_layer_stream",
     "parse_image",
+    "parse_repo",
     "pick_platform_manifest",
     "pull",
     "pull_many",
+    "pull_repo",
     "read_image_list",
     "resolve_layers",
     "safe_join",

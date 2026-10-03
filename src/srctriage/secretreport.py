@@ -148,7 +148,7 @@ def _finding_rows(findings: list[Finding]) -> list[str]:
         "| --- | --- | --- | --- | --- |",
     ]
     for f in findings:
-        where = f.path + (f":{f.line}" if f.line else "")
+        where = f.location
         # Pipes and backticks would break the table; a secret is shown
         # verbatim inside code markers so whitespace stays visible.
         secret = f.secret.replace("|", "\\|").replace("`", "'")
@@ -262,7 +262,7 @@ def _write_image_inventory(folder: str, result: ScanResult, copied: list[dict[st
     lines = [
         f"# Secret file inventory: {result.image}",
         "",
-        "Files below were copied from the image filesystem with their original",
+        "Files below were copied from the scanned tree with their original",
         "relative paths preserved under this folder.",
         "",
         f"- copied files: {len(copied)}",
@@ -272,7 +272,7 @@ def _write_image_inventory(folder: str, result: ScanResult, copied: list[dict[st
     if copied:
         lines += ["## Copied files", "", *_inventory_rows(copied), ""]
     else:
-        lines += ["## Copied files", "", "No filesystem files were copied for this image.", ""]
+        lines += ["## Copied files", "", "No files were copied for this target.", ""]
     _write(os.path.join(folder, "INVENTORY.md"), "\n".join(lines) + "\n")
 
 
@@ -285,7 +285,7 @@ def _write_by_image_inventory(base: str, copies: list[tuple[str, list[dict[str, 
         "# By-image secret file inventory",
         "",
         "Each row points at the copied file under `by-image/<image>/`, with the",
-        "image filesystem path preserved wherever it does not collide with report files.",
+        "original path preserved wherever it does not collide with report files.",
         "",
         f"- copied/source files listed: {total}",
         "",
@@ -393,6 +393,7 @@ def _group_by_secret(findings: list[Finding]) -> list[dict[str, Any]]:
                 "path": f.path,
                 "line": f.line,
                 "source": f.source,
+                "commit": f.commit or None,
                 "vendor": _is_vendor_path(f.path),
             }
             for f in sorted(items, key=lambda f: (f.image, f.path, f.line))
@@ -447,6 +448,8 @@ def _secret_rows(groups: list[dict[str, Any]]) -> list[str]:
         where = f"{first['image']}: {first['path']}" if first["image"] else first["path"]
         if first["line"]:
             where += f":{first['line']}"
+        if first.get("commit"):
+            where += f" @ {first['commit'][:12]}"
         verified = " (verified live)" if g["verified"] else ""
         rows.append(
             f"| {g['severity']} | `{secret}` | {g['rule']}{verified} | "
@@ -671,8 +674,8 @@ def write_report(scan: SecretScan, out_dir: str, *, complete: bool = True) -> st
         "",
         "## Totals",
         "",
-        f"- images scanned: {len(scan.results)}",
-        f"- images with findings: {len(scan.affected)}",
+        f"- targets scanned: {len(scan.results)}",
+        f"- targets with findings: {len(scan.affected)}",
         f"- findings: {len(findings)} ({_severity_line(counts)})",
         f"- engines run: {', '.join(cov.engines_run) or 'none'}",
     ]
@@ -682,7 +685,7 @@ def write_report(scan: SecretScan, out_dir: str, *, complete: bool = True) -> st
         )
     lines += ["", "## Where to look", "", "- `findings.json` - everything, machine-readable"]
     if scan.affected:
-        lines.append("- `by-image/<image>/` - per image, with copies of the offending files")
+        lines.append("- `by-image/<target>/` - per target, with copies of the offending files")
     if findings:
         lines.append("- `by-type/SUMMARY.md` - one row per credential kind, start here")
         lines.append("- `by-type/<kind>.json` - deduplicated by secret, with every occurrence")
@@ -698,7 +701,7 @@ def write_report(scan: SecretScan, out_dir: str, *, complete: bool = True) -> st
                 *_finding_rows(worst),
                 "",
             ]
-        lines += ["## Findings per image", ""]
+        lines += ["## Findings per target", ""]
         for image, count in Counter(f.image for f in findings).most_common():
             lines.append(f"- {image}: {count}")
         lines.append("")
@@ -706,7 +709,7 @@ def write_report(scan: SecretScan, out_dir: str, *, complete: bool = True) -> st
         lines += [
             "## No findings",
             "",
-            "Read `UNSCANNED.md` before concluding the images are clean: an",
+            "Read `UNSCANNED.md` before concluding the targets are clean: an",
             "engine that was not installed reports nothing, which looks",
             "identical to finding nothing.",
             "",
@@ -750,7 +753,7 @@ def summary_lines(scan: SecretScan, out_dir: str) -> list[str]:
     cov = scan.coverage()
     out = [
         f"{len(scan.findings)} findings ({_severity_line(counts)}) "
-        f"in {len(scan.affected)}/{len(scan.results)} images",
+        f"in {len(scan.affected)}/{len(scan.results)} targets",
     ]
     if cov.engines_run:
         out.append(f"engines: {', '.join(cov.engines_run)}")

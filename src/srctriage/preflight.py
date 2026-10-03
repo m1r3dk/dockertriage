@@ -22,7 +22,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from .constants import MANIFEST_ACCEPT, USER_AGENT
-from .reference import parse_image
+from .github import check_repo_access
+from .reference import is_repo_ref, parse_image
 from .registry import RateLimited, RegistryClient
 from .tls import ssl_context
 
@@ -30,7 +31,7 @@ from .tls import ssl_context
 REASONS = {
     "ok": "pullable",
     "inaccessible": "private, deleted, or taken down",
-    "missing_tag": "repository exists but the tag does not",
+    "missing_tag": "repository exists but the tag or ref does not",
     "rate_limited": "registry rate limit reached before it could be checked",
     "error": "could not be checked",
 }
@@ -107,6 +108,10 @@ def check_access(image_input: str, timeout: float = 30.0) -> AccessResult:
     puller falls back to the newest real tag, so this must agree with it
     or the preflight would reject images that download fine.
     """
+    if is_repo_ref(image_input):
+        verdict, detail = check_repo_access(image_input, timeout=timeout)
+        return AccessResult(image_input, status=verdict, detail=detail)
+
     try:
         image = parse_image(image_input)
     except ValueError as exc:

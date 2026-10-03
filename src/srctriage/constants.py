@@ -39,3 +39,13 @@ LAYER_CACHE_NAME = ".layers"
 # Where a batch writes the images it could not download. A count is not
 # actionable on its own, so the names go somewhere the user can act on.
 SKIPPED_FILE_NAME = "not-downloaded.txt"
+
+# GitHub. codeload serves a repository tarball without touching the REST
+# API's 60-requests-an-hour anonymous limit; the API is used only when a
+# token is set (private repos) or for metadata (`st inspect`).
+GITHUB_API = "https://api.github.com"
+GITHUB_CODELOAD = "https://codeload.github.com"
+# A bare clone kept beside a downloaded repository when --history is asked
+# for. It is bookkeeping, not part of the tree: verification counts and the
+# secrets file walk skip it, and the scanners read it as git history instead.
+HISTORY_DIR_NAME = ".history.git"

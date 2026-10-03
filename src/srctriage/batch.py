@@ -1,4 +1,4 @@
-"""Pull many images without letting one failure end the run.
+"""Pull many images and repositories without letting one failure end the run.
 
 A bad reference in a list of 500 must not abandon the other 499, so every
 failure is recorded as data. A rate limit is the one exception: it will hit
@@ -19,6 +19,7 @@ from . import verify as verify_mod
 from .constants import SKIPPED_FILE_NAME
 from .humanize import human_bytes, size_bar
 from .ratelimit import RateBudget, registry_credentials
+from .reference import is_repo_ref
 from .registry import RateLimited
 
 
@@ -136,8 +137,9 @@ def pull_many(
     verify_pulls: bool = True,
     deep_verify: bool = False,
     check_access: bool = True,
+    history: bool = False,
 ) -> list[BatchResult]:
-    """Pull every image in `images`, isolating failures.
+    """Pull every image or repository in `images`, isolating failures.
 
     One bad reference in a list of 500 must not abandon the other 499, so
     each pull is wrapped and recorded. `concurrency` controls how many
@@ -153,6 +155,9 @@ def pull_many(
     the final tally is a statement about the filesystem rather than about
     what the code believed it did. `deep_verify` re-counts the whole tree
     instead of trusting the census the pull just took.
+
+    `history` also keeps each GitHub repository's full git history for the
+    secrets scan; images ignore it.
     """
     items = list(images)
     results: list[BatchResult] = []
@@ -174,9 +179,11 @@ def pull_many(
     where = os.path.abspath(out_dir)
 
     # Check the budget before spending it. Finding out mid-run that the list
-    # was always too big is the failure mode this avoids.
+    # was always too big is the failure mode this avoids. Only Docker Hub has
+    # one, so a list of nothing but repositories skips the question.
+    hub_items = sum(1 for item in items if not is_repo_ref(item))
     try:
-        budget = ratelimit.check_rate_budget() if check_budget else RateBudget()
+        budget = ratelimit.check_rate_budget() if check_budget and hub_items else RateBudget()
     except Exception:
         # Diagnostics must never be the reason a batch does not start.
         budget = RateBudget()
@@ -187,9 +194,9 @@ def pull_many(
             log("  none left; the window must reset before any pull succeeds")
             if not budget.authenticated:
                 log("  set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN to raise the limit")
-        elif remaining < len(items):
+        elif remaining < hub_items:
             log(
-                f"  {len(items)} images but only {remaining} pulls left: "
+                f"  {hub_items} images but only {remaining} pulls left: "
                 f"expect to stop around image {remaining}"
             )
             if not budget.authenticated:
@@ -202,7 +209,7 @@ def pull_many(
     # costs no pull budget, so it is worth doing over the whole list.
     unreachable: list[BatchResult] = []
     if check_access and len(items) > 1:
-        log(f"checking access for {len(items)} images (no pull budget used)...")
+        log(f"checking access for {len(items)} references (no pull budget used)...")
         t_pre = time.time()
         access = preflight.check_many(items, concurrency=max(8, concurrency))
         counts = preflight.summarize(access)
@@ -227,7 +234,7 @@ def pull_many(
                     )
                 )
         if not pullable:
-            log("nothing left to download; every image was unreachable")
+            log("nothing left to download; every reference was unreachable")
             results.extend(unreachable)
             _write_skip_list(unreachable, out_dir, log)
             return results
@@ -238,13 +245,13 @@ def pull_many(
         # 'ok' that follows is a claim the reader can evaluate.
         if deep_verify:
             log(
-                "verifying each image (deep): folder exists, pull marked complete, "
+                "verifying each download (deep): folder exists, pull marked complete, "
                 "layers recorded, then file/dir/symlink/byte counts re-walked and "
                 "compared against the census taken at extraction"
             )
         else:
             log(
-                "verifying each image (quick): folder exists, .image.json parses, "
+                "verifying each download (quick): folder exists, .image.json parses, "
                 "pull marked complete, layers recorded, folder not empty "
                 "(use --deep to re-count every file)"
             )
@@ -257,10 +264,15 @@ def pull_many(
         """Redraw the in-place progress line for the image being pulled."""
         if not show_bar:
             return
-        pct = 100.0 * seen / total if total else 0.0
-        bar = size_bar(seen, total or 1)
         head = f"[{counter[0] + 1:>{width}}/{len(items)}]"
-        tail = f"{human_bytes(seen)}/{human_bytes(total)} ({pct:.0f}%)"
+        if total:
+            bar = size_bar(seen, total)
+            tail = f"{human_bytes(seen)}/{human_bytes(total)} ({100.0 * seen / total:.0f}%)"
+        else:
+            # A repository tarball streams with no length, so there is no
+            # fraction to draw; the byte count still shows it moving.
+            bar = size_bar(0, 1)
+            tail = human_bytes(seen)
         # Truncate the reference so the line cannot wrap and strand the \r.
         name = image if len(image) <= 34 else image[:33] + "…"
         line = f"{head} {name:<34} {bar} {tail:<22}"
@@ -294,6 +306,7 @@ def pull_many(
                 quiet=True,
                 verify=verify,
                 strict_tag=strict_tag,
+                history=history,
                 on_progress=(lambda seen, total: draw_bar(image, seen, total))
                 if show_bar
                 else None,
@@ -393,7 +406,7 @@ def pull_many(
         log(f"{verified}/{len(items)} {kind} on disk")
         checked = next((r.verify_summary for r in results if r.verify_summary), None)
         if checked:
-            log(f"  each image: {checked}")
+            log(f"  each download: {checked}")
         unattempted = len(items) - len(results)
         if unattempted:
             log(f"  {unattempted} never attempted")
@@ -421,7 +434,7 @@ def pull_many(
         total = len(results) + len(unreachable)
         log("")
         log(
-            f"{len(unreachable)} of {total} images were never downloadable "
+            f"{len(unreachable)} of {total} references were never downloadable "
             f"and were skipped before downloading"
         )
         _write_skip_list(unreachable, out_dir, log)
@@ -442,7 +455,7 @@ def _write_skip_list(skipped: list[BatchResult], out_dir: str, log) -> str | Non
     try:
         os.makedirs(out_dir, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write("# Images that could not be downloaded, and why.\n")
+            fh.write("# References that could not be downloaded, and why.\n")
             fh.write("# Re-runnable with: st -f this-file\n")
             for r in sorted(skipped, key=lambda x: x.image):
                 reason = (r.error or "").removeprefix("skipped: ")

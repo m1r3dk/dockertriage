@@ -32,11 +32,12 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
-from .constants import IMAGE_META_NAME, LAYER_CACHE_NAME
+from .constants import HISTORY_DIR_NAME, IMAGE_META_NAME, LAYER_CACHE_NAME
 
 # Our own bookkeeping, which is not part of the image's filesystem. The
 # record is read deliberately for its config, not walked as a source file.
-_SELF_SKIP = {LAYER_CACHE_NAME}
+# A repository's history clone is read as commits, not walked as files.
+_SELF_SKIP = {LAYER_CACHE_NAME, HISTORY_DIR_NAME}
 
 # Ordering for reports: the finding that gets someone paged goes first.
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -72,6 +73,15 @@ class Finding:
     # The source line, when the engine returned it. Avoids re-reading the
     # file to decide whether the credential is commented out.
     line_text: str = ""
+    # Set for a finding from git history: the commit that introduced it.
+    # The file may no longer exist, which is exactly why it matters.
+    commit: str = ""
+
+    @property
+    def location(self) -> str:
+        """path:line, plus the commit when the finding came from history."""
+        where = self.path + (f":{self.line}" if self.line else "")
+        return where + (f" @ {self.commit[:12]}" if self.commit else "")
 
     @property
     def key(self) -> tuple[str, str, int]:
@@ -111,6 +121,8 @@ class Finding:
             d["entropy"] = round(self.entropy, 4)
         if self.fingerprint:
             d["fingerprint"] = self.fingerprint
+        if self.commit:
+            d["commit"] = self.commit
         return d
 
 
@@ -344,7 +356,9 @@ def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
 
 
 # betterleaks and gitleaks share an output schema, so one adapter reads both.
-def _read_leaks_json(raw: str, engine: str, root: str, image: str) -> list[Finding]:
+def _read_leaks_json(
+    raw: str, engine: str, root: str, image: str, source: str = ""
+) -> list[Finding]:
     try:
         data = json.loads(raw or "[]")
     except ValueError:
@@ -383,12 +397,13 @@ def _read_leaks_json(raw: str, engine: str, root: str, image: str) -> list[Findi
                 context=(line_text or str(item.get("Match") or ""))[:200],
                 engine=engine,
                 image=image,
-                source=_source_for(path),
+                source=source or _source_for(path),
                 verified=_validation_state(item),
                 confidence=confidence,
                 entropy=float(item.get("Entropy") or 0.0),
                 fingerprint=str(item.get("Fingerprint") or ""),
                 line_text=line_text,
+                commit=str(item.get("Commit") or ""),
             )
         )
     return out
@@ -415,7 +430,7 @@ def _validation_state(item: dict[str, Any]) -> bool | None:
     return None
 
 
-def _read_trufflehog_json(raw: str, root: str, image: str) -> list[Finding]:
+def _read_trufflehog_json(raw: str, root: str, image: str, source: str = "") -> list[Finding]:
     """TruffleHog emits one JSON object per line, not a JSON array."""
     out: list[Finding] = []
     for line in (raw or "").splitlines():
@@ -429,7 +444,9 @@ def _read_trufflehog_json(raw: str, root: str, image: str) -> list[Finding]:
         secret = str(item.get("Raw") or "").strip()
         if not secret:
             continue
-        meta = ((item.get("SourceMetadata") or {}).get("Data") or {}).get("Filesystem") or {}
+        data = (item.get("SourceMetadata") or {}).get("Data") or {}
+        # Filesystem scans and git scans nest the location under different keys.
+        meta = data.get("Filesystem") or data.get("Git") or {}
         path = _relativise(str(meta.get("file") or ""), root)
         detector = str(item.get("DetectorName") or "unknown")
         out.append(
@@ -445,7 +462,8 @@ def _read_trufflehog_json(raw: str, root: str, image: str) -> list[Finding]:
                 engine="trufflehog",
                 verified=bool(item.get("Verified")),
                 image=image,
-                source=_source_for(path),
+                source=source or _source_for(path),
+                commit=str(meta.get("commit") or ""),
             )
         )
     return out
@@ -537,12 +555,17 @@ def _betterleaks_flags(verify: bool) -> list[str]:
 
 
 def run_engine(
-    engine: Engine, root: str, image: str, timeout: float, verify: bool
+    engine: Engine, root: str, image: str, timeout: float, verify: bool, git: bool = False
 ) -> tuple[list[Finding], str | None]:
-    """Run one engine over `root`. Returns (findings, error message)."""
+    """Run one engine over `root`. Returns (findings, error message).
+
+    With `git`, `root` is a bare repository and every commit on every branch
+    is read, which is how a secret deleted from the tree is still found.
+    """
     binary = engine.available()
     if not binary:
         return [], f"{engine.name} is not installed"
+    source = "git-history" if git else ""
 
     try:
         if engine.name in {"betterleaks", "gitleaks"}:
@@ -550,7 +573,7 @@ def run_engine(
             # image being scanned.
             cmd = [
                 binary,
-                "dir",
+                "git" if git else "dir",
                 root,
                 "--report-format",
                 "json",
@@ -563,16 +586,21 @@ def run_engine(
             if engine.name == "betterleaks":
                 cmd += _betterleaks_flags(verify)
             proc = _run(cmd, timeout)
-            return _read_leaks_json(proc.stdout, engine.name, root, image), None
+            return _read_leaks_json(proc.stdout, engine.name, root, image, source), None
 
         if engine.name == "trufflehog":
-            cmd = [binary, "filesystem", root, "--json", "--no-update"]
+            if git:
+                # A bare clone needs --bare, and git sources take a URI.
+                target = "file://" + os.path.abspath(root).replace(os.sep, "/")
+                cmd = [binary, "git", target, "--bare", "--json", "--no-update"]
+            else:
+                cmd = [binary, "filesystem", root, "--json", "--no-update"]
             if not verify:
                 # Verification sends candidate credentials to third-party
                 # APIs. That is a deliberate act, never a side effect.
                 cmd.append("--no-verification")
             proc = _run(cmd, timeout)
-            return _read_trufflehog_json(proc.stdout, root, image), None
+            return _read_trufflehog_json(proc.stdout, root, image, source), None
     except subprocess.TimeoutExpired:
         return [], f"{engine.name} timed out after {timeout:.0f}s"
     except OSError as exc:
@@ -1025,7 +1053,11 @@ def _scan_env_file(absolute: str, rel: str, image: str) -> list[Finding]:
 # on a commented line is disabled history, not a live leak: measured at 653
 # findings (3.6%) across the corpus, including whole blocks of rotated-out
 # tokens kept "just in case".
-_COMMENT_PREFIX = re.compile(r"^\s*(?:#|//|;|--|\*|/\*|<!--|%|rem\s)", re.IGNORECASE)
+#
+# `--` must not be followed by a third dash: `-----BEGIN ... PRIVATE KEY-----`
+# starts with two dashes too, and reading it as an SQL comment silently
+# dropped every PEM private key an engine reported.
+_COMMENT_PREFIX = re.compile(r"^\s*(?:#|//|;|--(?!-)|\*|/\*|<!--|%|rem\s)", re.IGNORECASE)
 
 
 def is_commented_out(line: str, secret: str) -> bool:
@@ -1108,6 +1140,10 @@ def scan_tree_for_secrets(
 
     def excluded_because(rel: str) -> str:
         """Why this path is out of scope, or '' if it is in scope."""
+        if rel == HISTORY_DIR_NAME or rel.startswith(HISTORY_DIR_NAME + "/"):
+            # The engines walking the tree see git's object store as files;
+            # its contents are scanned properly, as commits, further down.
+            return "git object store, scanned as history instead"
         if include_vendor:
             builtin = ""
         else:
@@ -1181,12 +1217,39 @@ def scan_tree_for_secrets(
         cov.engines_run.append(engine.name)
         collected.extend(found)
 
+    # A repository pulled with --history keeps its clone here. Every engine
+    # that ran on the tree runs again over the commits, so a credential that
+    # was committed and later deleted is still reported.
+    history = os.path.join(root, HISTORY_DIR_NAME)
+    if os.path.isdir(history):
+        scanned_by = []
+        for engine in planned:
+            if engine.name not in cov.engines_run:
+                continue
+            found, error = run_engine(engine, history, result.image, timeout, verify, git=True)
+            if error:
+                cov.engines_failed.append(
+                    {"engine": f"{engine.name} (git history)", "error": error}
+                )
+                continue
+            scanned_by.append(engine.name)
+            collected.extend(found)
+        if scanned_by:
+            cov.notes.append(
+                f"git history (every branch and tag) scanned by {', '.join(scanned_by)}"
+            )
+        else:
+            cov.notes.append(
+                "git history was downloaded but no engine could read it; "
+                "install betterleaks to scan commits"
+            )
+
     # Engines walk the tree themselves, so pruning our own walk does not stop
     # them reporting from a vendored directory. Drop those here, by the same
     # rule, and count them so the report stays honest about the difference.
     kept: list[Finding] = []
     for finding in collected:
-        if finding.source == "filesystem":
+        if finding.source in ("filesystem", "git-history"):
             why = excluded_because(finding.path)
             if why:
                 cov.note_excluded_finding(why)
@@ -1242,6 +1305,9 @@ def _drop_commented_out(findings: list[Finding], root: str, cov: ScanCoverage) -
                 continue
             out.append(f)
         elif f.source == "filesystem" and f.line:
+            # Only the tree on disk is checked against the file. A history
+            # finding's line belongs to an old commit, so today's file at
+            # that line number says nothing about it.
             needs_read.setdefault(f.path, []).append(f)
         else:
             out.append(f)
