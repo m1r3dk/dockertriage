@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "srctriage"
 dynamic = ["version"]
-description = "Download a Docker image and extract its full rootfs to a folder. No daemon, no root."
+description = "Download container images and GitHub repositories to a folder and triage them for secrets. No daemon, no root, no git."
 readme = "README.md"
 requires-python = ">=3.14"
 license = { text = "MIT" }
 authors = [{ name = "Kishan Lal", email = "kishan.lal@m1r3dk.com" }]
 maintainers = [{ name = "Kishan Lal", email = "kishan.lal@m1r3dk.com" }]
-keywords = ["docker", "oci", "registry", "rootfs", "container", "extract"]
+keywords = ["docker", "oci", "registry", "rootfs", "container", "extract", "github", "git", "secrets", "security"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

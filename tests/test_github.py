@@ -294,6 +294,48 @@ class TestHttpErrorsReadAsReasons(unittest.TestCase):
         self.assertEqual(preflight.check_access("gh:o").status, "error")
 
 
+class TestHistoryCloneAuth(unittest.TestCase):
+    """GitHub's git endpoint wants Basic auth; Bearer falls through to a prompt."""
+
+    def test_token_goes_in_as_basic_via_env_never_argv(self):
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"], seen["env"] = cmd, kw["env"]
+            return unittest.mock.Mock(returncode=0, stderr="")
+
+        with (
+            unittest.mock.patch.object(github.shutil, "which", lambda name: "/usr/bin/git"),
+            unittest.mock.patch.object(github.subprocess, "run", fake_run),
+        ):
+            github.clone_history(parse_repo("gh:o/r"), "/tmp/x.git", "s3cr3t")
+        import base64
+
+        want = base64.b64encode(b"x-access-token:s3cr3t").decode()
+        self.assertEqual(seen["env"]["GIT_CONFIG_VALUE_0"], f"Authorization: Basic {want}")
+        self.assertEqual(seen["env"]["GIT_TERMINAL_PROMPT"], "0")
+        self.assertFalse([a for a in seen["cmd"] if "s3cr3t" in a])
+
+    def test_a_failed_clone_fails_the_pull_and_writes_no_record(self):
+        root = tempfile.mkdtemp(prefix="st-ghclone-")
+        self.addCleanup(shutil.rmtree, root, True)
+        archive = os.path.join(root, "a.tar.gz")
+        make_tarball(archive, [("README", "file", "x")])
+        with open(archive, "rb") as fh:
+            payload = fh.read()
+
+        def boom(*a, **k):
+            raise RuntimeError("git clone of o/r failed")
+
+        with (
+            unittest.mock.patch.object(github, "_open", lambda *a: _FakeResponse(payload)),
+            unittest.mock.patch.object(github, "clone_history", boom),
+        ):
+            with self.assertRaises(RuntimeError):
+                puller.pull("gh:o/r", root, quiet=True, history=True)
+        self.assertIsNone(verify_mod.read_record(os.path.join(root, "github_o_r")))
+
+
 class TestRedirectDropsTheToken(unittest.TestCase):
     def test_authorization_is_not_forwarded(self):
         import urllib.request

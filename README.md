@@ -4,29 +4,34 @@
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Download Docker and OCI images directly from registries and extract their merged
-root filesystem to disk.
+Download container images and GitHub repositories to disk, then triage them:
+verify what landed and pull every credential out into one report.
 
-**No Docker daemon. No root access. No running containers.**
+**No Docker daemon. No root access. No running containers. No git needed.**
 
 ```bash
-st alpine:3.19
+st alpine:3.19                       # an image's merged root filesystem
+st github.com/octocat/Hello-World    # a repository's working tree
+st secrets                           # every credential in what you pulled
 ```
 
 ## About
 
 `srctriage` is a small Python CLI for people who need the files inside a
-container image, not a running container. It resolves image manifests, downloads
-layers, verifies layer digests, applies OCI whiteouts in order, preserves file
-modes, symlinks and hardlinks, then writes a normal directory you can inspect
-with standard tools.
+container image or a GitHub repository, not a running container or a dev
+checkout. For an image it resolves manifests, downloads layers, verifies layer
+digests, applies OCI whiteouts in order, preserves file modes, symlinks and
+hardlinks, then writes a normal directory you can inspect with standard tools.
+For a repository it downloads the tree at a branch, tag or commit as a single
+archive, and optionally the full git history.
 
 It is useful for:
 
-- security triage and offline image review
+- security triage and offline review of images and repositories
+- finding leaked credentials, including ones deleted from git history
 - source and application file extraction from container images
-- batch image collection from lists of references
-- checking whether images are private, deleted, taken down, or missing
+- batch collection from lists that mix images and repositories
+- checking whether images or repositories are private, deleted, or missing
 - producing repeatable JSON evidence for automation and audits
 - inspecting image layers without installing Docker
 
@@ -35,16 +40,19 @@ final merged filesystem the container would see after all layers are applied.
 
 ## Features
 
-- Pulls from Docker Hub and Amazon ECR Public
-- Accepts tags, digests, registry references, and Docker Hub URLs
+- Pulls images from Docker Hub and Amazon ECR Public
+- Downloads GitHub repositories, public or private, at any branch, tag or commit
+- Accepts tags, digests, registry references, Docker Hub URLs, and GitHub URLs
 - Extracts a complete merged rootfs without Docker
 - Downloads layers concurrently and extracts them in layer order
 - Verifies every blob against the manifest SHA-256 digest
 - Handles OCI whiteouts, opaque directories, hardlinks, symlinks, and read-only directories
-- Lets you extract only an app path with `--path` or the image `WorkingDir` with `--app`
+- Lets you extract only a path with `--path`, or an image's `WorkingDir` with `--app`
 - Reports what filtered extraction kept and what it left outside the filter
-- Supports batch pulls from image lists with JSON reports
+- Supports batch pulls from mixed image and repository lists with JSON reports
 - Includes `st verify` for quick or deep checks after extraction
+- Includes `st secrets`, which merges betterleaks, gitleaks and TruffleHog with
+  name-based detection, and scans git history with `--history`
 - Keeps the importable library stdlib-only, with Typer/Rich used only by the CLI
 
 ## Installation
@@ -144,6 +152,57 @@ Verify extracted images later:
 st verify ./output
 ```
 
+## GitHub repositories
+
+A GitHub reference works anywhere an image reference does:
+
+```bash
+st github.com/pallets/flask                    # default branch
+st github.com/pallets/flask@3.0.0              # a tag, branch or commit sha
+st https://github.com/pallets/flask/tree/3.0.0 # a URL copied from the browser
+st gh:pallets/flask -P src/flask               # only one folder
+st git@github.com:pallets/flask.git            # a clone URL
+```
+
+The tree arrives as one archive, so no git is needed and the download is a
+single request. The folder is named `github_<owner>_<repo>[_<ref>]` and carries
+the same `.image.json` record as an image, including the exact commit sha that
+was downloaded, so `st verify` and `st secrets` treat it like any other target.
+
+Add `--history` (`-H`) to keep the full git history beside the tree in
+`.history.git`. That needs git installed, and it is what lets `st secrets` find
+credentials that were committed and later deleted:
+
+```bash
+st gh:trufflesecurity/test_keys --history
+st secrets github_trufflesecurity_test_keys
+```
+
+```text
+critical AKIAYVP4CIPPERUVIFXG
+         keys:4 @ fbc14303ffbf  aws-access-token
+```
+
+`@ fbc14303ffbf` is the commit that introduced it: that key is no longer in
+the tree, only in history.
+
+Look at a repository without downloading it:
+
+```bash
+st inspect github.com/pallets/flask        # description, size, default branch
+st inspect --digests gh:pallets/flask@main # the commit sha, for scripts
+```
+
+Public repositories need no credentials. For private repositories, or to raise
+GitHub's API limits, set a token:
+
+```bash
+export GITHUB_TOKEN="$(gh auth token)"   # or GH_TOKEN
+```
+
+The token is sent only to `api.github.com` and to git, never to the download
+host GitHub redirects to.
+
 ## What the output looks like
 
 `st inspect` shows the resolved image, platform, compressed layer sizes, and the
@@ -236,7 +295,7 @@ links that point outside the kept paths.
 
 ## Batch downloads
 
-Create an image list:
+Create a list. Images and repositories can be mixed:
 
 ```text
 # images.txt
@@ -245,9 +304,11 @@ redis:7
 python:3.12-slim
 https://hub.docker.com/_/nginx
 public.ecr.aws/docker/library/ubuntu:24.04
+github.com/pallets/flask@3.0.0
+gh:octocat/Hello-World
 ```
 
-Pull every image in the list:
+Pull everything in the list:
 
 ```bash
 st -f images.txt
@@ -260,18 +321,41 @@ a report:
 st -f images.txt -o ./rootfs -c 4 -j 8 -r pull-report.json
 ```
 
-- `-c 4` pulls up to four images at once
+- `-c 4` pulls up to four images or repositories at once
 - `-j 8` downloads up to eight layers per image
-- `-r` writes JSON totals and per-image results
+- `-r` writes JSON totals and per-reference results
+- `-H` also keeps git history for every repository in the list
 
 Blank lines, comments, duplicate entries, stray quotes, and trailing commas are
 handled automatically.
 
-Before downloading a batch, Docker Hub references are checked for accessibility.
-Private, deleted, taken-down, or missing tags are skipped and listed in
-`output/not-downloaded.txt`.
+Before downloading a batch, every reference is checked for accessibility.
+Private, deleted, taken-down, or missing tags and refs are skipped and listed in
+`output/not-downloaded.txt`, which can be fed straight back to `st -f`.
 
 Disable that preflight with `--no-check-access` or `-N`.
+
+## Finding secrets
+
+`st secrets` collects every credential in what you pulled into one folder:
+
+```bash
+st -f images.txt          # pull into ./output
+st secrets                # scan ./output, write ./extracted_secrets
+st secrets ./output/github_pallets_flask -o ./flask-secrets
+```
+
+It runs whichever of [betterleaks](https://github.com/betterleaks/betterleaks),
+gitleaks and TruffleHog are installed (`st secrets --list-engines` shows which),
+then adds what they were measured to miss: values under secret-named variables
+(`DB_PASSWORD=hunter2`), credential files by name (`.npmrc`, `.aws/credentials`,
+private keys), and an image's baked-in `ENV`. For a repository pulled with
+`--history`, every engine also reads every commit on every branch.
+
+Values are written **in plaintext** so they can be rotated, so treat the output
+folder as the credentials themselves. `UNSCANNED.md` lists everything nothing
+looked at, because an engine that is not installed reports nothing, which
+looks identical to finding nothing. `--fail-on-findings` exits 1 for CI gates.
 
 ## Verification
 
@@ -299,7 +383,7 @@ Run verification later:
 st verify ./output
 ```
 
-Include the original list to catch images that never created an output folder:
+Include the original list to catch references that never created an output folder:
 
 ```bash
 st verify ./output -f images.txt
@@ -320,18 +404,22 @@ extracted file, so a same-size content replacement is outside its scope.
 | Command | Purpose |
 | --- | --- |
 | `st IMAGE` | Pull and extract one image. `pull` is implied. |
+| `st github.com/OWNER/REPO[@REF]` | Download one repository's tree. |
+| `st gh:OWNER/REPO --history` | Also keep full git history for `st secrets`. |
 | `st pull IMAGE` | Explicit single-image pull. |
-| `st pull IMAGE --path P` | Extract only path `P` and report coverage. |
+| `st pull REF --path P` | Extract only path `P` and report coverage. |
 | `st pull IMAGE --app` | Extract only the image's `WorkingDir`. |
-| `st -f FILE` | Preflight, pull, and verify an image list. |
-| `st verify PATH` | Verify previously extracted images. |
+| `st -f FILE` | Preflight, pull, and verify a list of images and repositories. |
+| `st verify PATH` | Verify previous downloads. |
 | `st inspect IMAGE` | Show layer sizes and build commands without downloading layers. |
 | `st inspect --digests IMAGE` | Print layer digests, one per line. |
+| `st inspect REPO` | Show a repository's details without downloading it. |
+| `st secrets [PATH]` | Extract every credential into a report folder. |
 | `st --help` | Show top-level help. |
 | `st COMMAND --help` | Show command help. |
 
-Run `st pull --help`, `st inspect --help`, or `st verify --help` for the full
-option list.
+Run `st pull --help`, `st inspect --help`, `st verify --help`, or
+`st secrets --help` for the full option list.
 
 ## Credentials and rate limits
 
@@ -343,6 +431,10 @@ export DOCKERHUB_USERNAME="your-username"
 export DOCKERHUB_TOKEN="your-personal-access-token"
 st -f images.txt -c 4
 ```
+
+For GitHub, set `GITHUB_TOKEN` or `GH_TOKEN`. Public repositories download
+anonymously from `codeload.github.com`, which does not count against the REST
+API's 60-requests-an-hour anonymous limit.
 
 Credentials are read only from environment variables. They are not written to
 reports or output metadata.
@@ -357,6 +449,8 @@ result = verify_dest(rootfs, image="alpine:3.19", quick=False)
 
 if not result.ok:
     raise RuntimeError(result.problems)
+
+tree = pull("github.com/pallets/flask@3.0.0", "./output", history=True)
 ```
 
 The library modules use only the Python standard library. CLI dependencies are
@@ -366,7 +460,8 @@ loaded only by the CLI.
 
 The extractor handles OCI whiteouts, opaque directories, symlinks, hardlinks,
 type transitions between layers, read-only directories, and BuildKit attestation
-entries. Archive paths and link targets are confined to the destination.
+entries. Archive paths and link targets are confined to the destination, for
+repository archives as well as image layers.
 
 CI checks include:
 
@@ -382,10 +477,15 @@ CI checks include:
 
 - Docker Hub and Amazon ECR Public are supported. Arbitrary private registries
   are not yet supported.
+- GitHub is the only supported code host. GitLab and Bitbucket are not yet
+  supported.
+- A repository download is the tree only. Git LFS objects arrive as pointer
+  files and submodules as empty folders, as in GitHub's own archives.
+- `--history` needs the git binary; nothing else does.
 - Device and FIFO entries are skipped because creating them requires elevated
   privileges and they are not useful for ordinary filesystem inspection.
 - `srctriage` extracts files. It is not a container runtime and does not run
-  images.
+  images or repository code.
 - Filtered extraction can intentionally omit files outside the selected path.
   The coverage report tells you what was outside the filter.
 

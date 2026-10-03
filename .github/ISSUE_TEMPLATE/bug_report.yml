@@ -1,5 +1,5 @@
 name: Bug report
-description: Something extracted wrongly, crashed, or reported the wrong thing.
+description: Something downloaded or extracted wrongly, crashed, or reported the wrong thing.
 labels: [bug]
 body:
   - type: markdown
@@ -11,9 +11,9 @@ body:
   - type: input
     id: image
     attributes:
-      label: Image reference
+      label: Image or repository reference
       description: The exact reference, so this can be reproduced against the same bytes.
-      placeholder: "alpine:3.19, or ghcr.io/org/app@sha256:..."
+      placeholder: "alpine:3.19, org/app@sha256:..., or github.com/owner/repo@<commit>"
     validations:
       required: true
 

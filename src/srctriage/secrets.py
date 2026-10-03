@@ -1,4 +1,4 @@
-"""Collect the credentials inside an extracted image into one place.
+"""Collect the credentials inside an extracted image or repository into one place.
 
 Detection is bought, not built. Measured against a 17-secret corpus,
 betterleaks found 11, gitleaks 9, detect-secrets 11, and TruffleHog 5, so
@@ -1114,7 +1114,7 @@ def scan_tree_for_secrets(
     include_vendor: bool = False,
     extra_excludes: Iterable[str] = (),
 ) -> ScanResult:
-    """Scan one extracted image, or any directory, for credentials.
+    """Scan one extracted image or repository, or any directory, for credentials.
 
     Runs every installed engine, adds the two classes of finding they were
     measured to miss, and records what did not run so an empty report can be
@@ -1335,7 +1335,7 @@ def discover_targets(path: str) -> list[str]:
     Three shapes are all reasonable to point at, and guessing wrong either
     misses images or scans one tree as if it were many:
 
-    * an extracted image, recognised by its `.image.json`
+    * an extracted image or downloaded repository, recognised by its `.image.json`
     * a parent of extracted images, the usual `output/` from a batch
     * any other directory, scanned whole, which is what `st secrets .` means
       when the working directory is a checkout rather than a pull

@@ -35,6 +35,8 @@ jobs:
         run: python tests/test_srctriage.py
       - name: CLI tests
         run: python tests/test_cli.py
+      - name: GitHub repository tests
+        run: python tests/test_github.py
       - name: Smoke test the commands
         run: |
           st --version
@@ -45,6 +47,11 @@ jobs:
           st pull alpine:3.19 --path /etc -d /tmp/filtered -q
           test -d /tmp/filtered/etc || { echo "filter dropped /etc"; exit 1; }
           test ! -d /tmp/filtered/bin || { echo "filter kept /bin"; exit 1; }
+          # A repository downloads without git, and records the commit.
+          st github.com/octocat/Hello-World -d /tmp/repo -q
+          test -f /tmp/repo/README || { echo "repository tree missing"; exit 1; }
+          grep -q '"commit": "[0-9a-f]\{40\}"' /tmp/repo/.image.json || { echo "no commit"; exit 1; }
+          st verify /tmp/repo --deep
 
   cross-platform:
     # Extraction is all path handling, and paths are where macOS and Windows

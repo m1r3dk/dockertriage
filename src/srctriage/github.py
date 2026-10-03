@@ -15,6 +15,7 @@ The folder carries the same `.image.json` record a pulled image does, so
 `st verify` and `st secrets` treat a repository like any other target.
 """
 
+import base64
 import json
 import os
 import shutil
@@ -186,16 +187,20 @@ def clone_history(repo: RepoRef, dest: str, token: str | None, timeout: float = 
     Uses the git binary, which only this optional step needs. The token goes
     in through git's environment config, so it never lands in the clone's
     config file or a process listing.
+
+    GitHub's git endpoint takes a token as Basic auth, not Bearer: measured,
+    a Bearer header falls through to an interactive username prompt.
     """
     git = shutil.which("git")
     if not git:
         raise RuntimeError("--history needs git installed; the tree download itself does not")
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
     if token:
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
         env.update(
             GIT_CONFIG_COUNT="1",
             GIT_CONFIG_KEY_0="http.https://github.com/.extraheader",
-            GIT_CONFIG_VALUE_0=f"Authorization: Bearer {token}",
+            GIT_CONFIG_VALUE_0=f"Authorization: Basic {basic}",
         )
     proc = subprocess.run(  # noqa: S603 - argv list, never a shell string
         [git, "clone", "--bare", "--quiet", f"https://github.com/{repo.slug}.git", dest],
@@ -271,7 +276,14 @@ def pull_repo(
 
     if history:
         log("cloning full history for the secrets scan...")
-        clone_history(repo, os.path.join(dest, HISTORY_DIR_NAME), token)
+        try:
+            clone_history(repo, os.path.join(dest, HISTORY_DIR_NAME), token)
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+            # The tree is fine, but the user asked for history and did not get
+            # it. Leave no half-clone, and no record claiming a finished pull,
+            # so `st verify` reports this folder rather than passing it.
+            shutil.rmtree(os.path.join(dest, HISTORY_DIR_NAME), ignore_errors=True)
+            raise RuntimeError(f"tree downloaded, but history was not: {exc}") from None
 
     meta: dict[str, Any] = {
         "kind": "github",

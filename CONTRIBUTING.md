@@ -1,7 +1,8 @@
 # Contributing
 
-Thanks for looking. Bug reports with a reproducing image reference are the
-most useful thing you can send; correctness fixes with a test are the next.
+Thanks for looking. Bug reports with a reproducing image or repository
+reference are the most useful thing you can send; correctness fixes with a
+test are the next.
 
 By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 Security problems go through [SECURITY.md](SECURITY.md), not a public issue.
@@ -18,9 +19,10 @@ of them is a different tool, so each is enforced by CI rather than by review:
    and it is the only CLI. There used to be two, kept in sync by hand, and
    they drifted. Do not add a second one.
 3. No Docker daemon, no root. The tool must run anywhere with nothing
-   installed.
+   installed. git is needed only for `--history`; a plain repository
+   download goes through GitHub's archive endpoint instead.
 4. Every correctness fix ships with a test that fails without it.
-5. The test suite stays offline. Tests fake the registry; nothing in
+5. The test suite stays offline. Tests fake the registry and GitHub; nothing in
    `tests/` may reach the network, so the suite is deterministic and works
    on a plane. `tests/verify_against_crane.py` is the deliberate exception
    and is not part of the default run.

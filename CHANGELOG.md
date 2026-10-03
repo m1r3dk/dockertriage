@@ -14,8 +14,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   console scripts (`srctriage` and `st`), the repository URL and the secrets
   engine label (`engine: "srctriage"`) all change together. Reinstall with
   `pipx uninstall dockertriage && pipx install "srctriage @ git+https://github.com/m1r3dk/srctriage.git"`.
+- User-facing wording says "references", "downloads" and "targets" where both
+  images and repositories apply: batch progress, `not-downloaded.txt`, the
+  verify table, and the secrets `SUMMARY.md` totals ("targets scanned").
 
 ### Added
+- **GitHub repositories.** `st github.com/owner/repo[@ref]`, `gh:owner/repo`,
+  clone URLs and browser links (`/tree/<ref>`, `/commit/<sha>`,
+  `/releases/tag/<tag>`) download the repository's tree as one archive, with
+  no git required. The folder is `github_<owner>_<repo>[_<ref>]` and carries
+  the usual `.image.json`, including the exact commit sha, so `st verify` and
+  `st secrets` work on it unchanged. Public repositories come from codeload,
+  outside the API's anonymous limit; `GITHUB_TOKEN` or `GH_TOKEN` switches to
+  the API for private repositories, and the token is dropped on the redirect
+  to the download host.
+- **`--history` / `-H`** keeps a bare clone in `.history.git` (needs git).
+  `st secrets` then runs every installed engine over every commit on every
+  branch, so a credential committed and later deleted is still reported,
+  with `@ <commit>` beside its path and a `commit` field in `findings.json`.
+  The token reaches git as Basic auth through the environment, never argv
+  or the clone's config.
+- Batch lists may mix images and repositories. The preflight probes a
+  repository with a HEAD on its archive; a repository-only list skips the
+  Docker Hub budget check. `st verify -f` maps repository references to
+  their folders.
+- `st inspect` on a repository shows its description, size, language and
+  default branch; `st inspect --digests` prints the commit sha a ref
+  resolves to.
+- Python API: `pull_repo`, `parse_repo`, `is_repo_ref`, `RepoRef`; `pull`
+  accepts repository references and a `history` argument.
 - **betterleaks is now the primary engine, and gitleaks stands down.**
   gitleaks is no longer maintained; betterleaks is its continuation, with the
   same rule family, a superset of the flags, and 11/17 against 9/17 on the
@@ -85,6 +112,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   previously 83% of all findings sitting in `other`.
 
 ### Fixed
+- **PEM private keys were silently dropped by `st secrets`.** The SQL
+  comment rule (`--`) matched `-----BEGIN ... PRIVATE KEY-----`, so every
+  private key an engine reported was discarded as "commented-out code".
+  Found while scanning a repository; images were affected the same way.
 - **A credential on a commented-out line is no longer reported as live.**
   Measured at 653 findings (3.6%) across the corpus: rotated-out tokens kept
   in comments. The line comes from the engine's own output where available,
